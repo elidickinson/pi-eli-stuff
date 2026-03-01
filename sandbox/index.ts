@@ -212,7 +212,9 @@ export default function (pi: ExtensionAPI) {
         vmEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
       }
 
+      const imagePath = process.env.GONDOLIN_GUEST_DIR;
       const created = await VM.create({
+        sandbox: imagePath ? { imagePath } : undefined,
         env: Object.keys(vmEnv).length > 0 ? vmEnv : undefined,
         vfs: {
           mounts: {
