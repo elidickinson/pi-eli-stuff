@@ -76,22 +76,11 @@ function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
   return {
     readFile: async (p) => {
       const guestPath = toGuestPath(localCwd, p);
-      const r = await vm.exec(["/bin/cat", guestPath]);
-      if (!r.ok) {
-        throw new Error(`cat failed (${r.exitCode}): ${r.stderr}`);
-      }
-      return r.stdoutBuffer;
+      return vm.fs.readFile(guestPath);
     },
     access: async (p) => {
       const guestPath = toGuestPath(localCwd, p);
-      const r = await vm.exec([
-        "/bin/sh",
-        "-lc",
-        `test -r ${shQuote(guestPath)}`,
-      ]);
-      if (!r.ok) {
-        throw new Error(`not readable: ${p}`);
-      }
+      await vm.fs.access(guestPath);
     },
     detectImageMimeType: async (p) => {
       const guestPath = toGuestPath(localCwd, p);
@@ -120,23 +109,12 @@ function createGondolinWriteOps(vm: VM, localCwd: string): WriteOperations {
     writeFile: async (p, content) => {
       const guestPath = toGuestPath(localCwd, p);
       const dir = path.posix.dirname(guestPath);
-      const b64 = Buffer.from(content).toString("base64");
-      const script = [
-        `set -eu`,
-        `mkdir -p ${shQuote(dir)}`,
-        `echo ${shQuote(b64)} | base64 -d > ${shQuote(guestPath)}`,
-      ].join("\n");
-      const r = await vm.exec(["/bin/sh", "-lc", script]);
-      if (!r.ok) {
-        throw new Error(`write failed (${r.exitCode}): ${r.stderr}`);
-      }
+      await vm.fs.mkdir(dir, { recursive: true });
+      await vm.fs.writeFile(guestPath, content);
     },
     mkdir: async (dir) => {
       const guestDir = toGuestPath(localCwd, dir);
-      const r = await vm.exec(["/bin/mkdir", "-p", guestDir]);
-      if (!r.ok) {
-        throw new Error(`mkdir failed (${r.exitCode}): ${r.stderr}`);
-      }
+      await vm.fs.mkdir(guestDir, { recursive: true });
     },
   };
 }
