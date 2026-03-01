@@ -230,6 +230,13 @@ export default function (pi: ExtensionAPI) {
       });
 
       vm = created;
+
+      let buildInfo = "";
+      try {
+        const r = await created.exec("cat /etc/build-info");
+        if (r.exitCode === 0) buildInfo = r.stdout.trim();
+      } catch {}
+
       ctx?.ui.setStatus(
         "gondolin",
         ctx.ui.theme.fg(
@@ -239,7 +246,8 @@ export default function (pi: ExtensionAPI) {
       );
       ctx?.ui.notify(
         `Gondolin VM ready. Host ${localCwd} mounted at ${GUEST_WORKSPACE}` +
-          (oauthToken ? " (Claude OAuth injected)" : " (no Claude OAuth found)"),
+          (oauthToken ? " (Claude OAuth injected)" : " (no Claude OAuth found)") +
+          (buildInfo ? `\n${buildInfo}` : "\nWarning: no /etc/build-info in guest image"),
         "info",
       );
       return created;
