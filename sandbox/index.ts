@@ -315,6 +315,7 @@ export default function (pi: ExtensionAPI) {
       `Current working directory: ${localCwd}`,
       `Current working directory: ${GUEST_WORKSPACE} (Gondolin VM, mounted from host: ${localCwd})`,
     );
-    return { systemPrompt: modified };
+    const appendix = "\nTools available via bash: rg (ripgrep), git, curl, python3, node";
+    return { systemPrompt: modified + appendix };
   });
 }
