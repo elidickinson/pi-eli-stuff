@@ -211,6 +211,12 @@ export default function (pi: ExtensionAPI) {
       if (oauthToken) {
         vmEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
       }
+      const ENV_PREFIX = "GONDOLIN_ENV_";
+      for (const [k, v] of Object.entries(process.env)) {
+        if (k.startsWith(ENV_PREFIX) && v !== undefined) {
+          vmEnv[k.slice(ENV_PREFIX.length)] = v;
+        }
+      }
 
       const imagePath = process.env.GONDOLIN_GUEST_DIR;
       const created = await VM.create({
