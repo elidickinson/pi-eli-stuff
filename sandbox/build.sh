@@ -9,5 +9,5 @@ jq --arg info "$BUILD_INFO" \
   '.postBuild.commands += ["echo \($info | @json) > /etc/build-info"]' \
   build-config.json > build-config-stamped.json
 
-gondolin build --config build-config-stamped.json --output ./my-assets
+gondolin build --config build-config-stamped.json --output ./guest-image
 rm -f build-config-stamped.json
