@@ -10,13 +10,14 @@
  *   pi -e /path/to/pi-sandbox.ts
  */
 
-import { execSync } from "node:child_process";
 import path from "node:path";
 
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+
+import { buildVmEnv } from "./env.ts";
 import {
   type BashOperations,
   createBashTool,
@@ -31,19 +32,6 @@ import {
 import { RealFSProvider, VM } from "@earendil-works/gondolin";
 
 const GUEST_WORKSPACE = "/workspace";
-
-function getClaudeOAuthToken(): string | undefined {
-  try {
-    const json = execSync(
-      'security find-generic-password -s "Claude Code-credentials" -w',
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-    const creds = JSON.parse(json);
-    return creds?.claudeAiOauth?.accessToken;
-  } catch {
-    return undefined;
-  }
-}
 
 function shQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
@@ -205,18 +193,8 @@ export default function (pi: ExtensionAPI) {
         ),
       );
 
-      const oauthToken = getClaudeOAuthToken();
-
-      const vmEnv: Record<string, string> = {};
-      if (oauthToken) {
-        vmEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
-      }
-      const ENV_PREFIX = "GONDOLIN_ENV_";
-      for (const [k, v] of Object.entries(process.env)) {
-        if (k.startsWith(ENV_PREFIX) && v !== undefined) {
-          vmEnv[k.slice(ENV_PREFIX.length)] = v;
-        }
-      }
+      const vmEnv = buildVmEnv();
+      const oauthToken = vmEnv.CLAUDE_CODE_OAUTH_TOKEN;
 
       const imagePath = process.env.GONDOLIN_GUEST_DIR;
       const created = await VM.create({
