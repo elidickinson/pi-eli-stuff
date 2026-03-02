@@ -12,6 +12,7 @@
 
 import path from "node:path";
 
+import { Type } from "@sinclair/typebox";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -293,6 +294,30 @@ export default function (pi: ExtensionAPI) {
         operations: createGondolinBashOps(activeVm, localCwd),
       });
       return tool.execute(id, params, signal, onUpdate);
+    },
+  });
+
+  pi.registerTool({
+    name: "AskPi",
+    label: "Ask Pi",
+    description: "Send a prompt to pi and return the response.",
+    parameters: Type.Object({
+      prompt: Type.String({ description: "The prompt to send" }),
+      model: Type.Optional(Type.String({ description: "Model ID" })),
+    }),
+    async execute(id, params, signal, onUpdate, ctx) {
+      const activeVm = await ensureVm(ctx);
+      const cmd = params.model
+        ? `pi -p --model ${shQuote(params.model)} ${shQuote(params.prompt)}`
+        : `pi -p ${shQuote(params.prompt)}`;
+      const ops = createGondolinBashOps(activeVm, localCwd);
+      let output = "";
+      const { exitCode } = await ops.exec(cmd, localCwd, {
+        onData: (chunk) => { output += chunk; },
+        signal: signal ?? undefined,
+      });
+      const text = output.trim() || `(exit ${exitCode})`;
+      return { content: [{ type: "text", text }], details: {} };
     },
   });
 

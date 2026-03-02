@@ -24,17 +24,21 @@ Runs the same code review prompt through 3 different models in parallel, then sy
    Look for and read: `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md` in repo root.
    Save a brief summary of key rules to `/tmp/review-guidelines.txt`.
 
-3. **Run 3 parallel reviews via bash**
-   ```bash
-   REVIEW_PROMPT="You are an expert code reviewer. Review this diff for bugs, security issues, logic errors, performance problems, and style issues. Be specific — cite file paths and line numbers. Score each finding 0-100 confidence. Skip anything below 50. Diff: $(cat /tmp/review-diff.txt) Guidelines: $(cat /tmp/review-guidelines.txt)"
+3. **Run 3 parallel reviews**
 
-   claude -p "$REVIEW_PROMPT" > /tmp/review-claude.md &
-   pi -p --model deepseek/deepseek-v3.2 "$REVIEW_PROMPT" > /tmp/review-deepseek.md &
-   pi -p --model openrouter/moonshotai/kimi-k2.5 "$REVIEW_PROMPT" > /tmp/review-kimi.md &
-   wait
+   Build the review prompt from the diff and guidelines:
+   ```
+   REVIEW_PROMPT = "You are an expert code reviewer. Review this diff for bugs, security issues, logic errors, performance problems, and style issues. Be specific — cite file paths and line numbers. Score each finding 0-100 confidence. Skip anything below 50. Diff: <diff contents> Guidelines: <guidelines contents>"
    ```
 
-   **Note**: `claude -p` uses Claude Opus via the user's Claude Code subscription. The other two go through pi's configured providers.
+   Then run all 3 in parallel:
+   - **Claude**: Use the `AskClaude` tool with the review prompt. Save result to `/tmp/review-claude.md`.
+   - **DeepSeek**: Use the `AskPi` tool with model `deepseek/deepseek-v3.2` and the review prompt. Save result to `/tmp/review-deepseek.md`.
+   - **Kimi**: Use the `AskPi` tool with model `openrouter/moonshotai/kimi-k2.5` and the review prompt. Save result to `/tmp/review-kimi.md`.
+
+   Run all 3 tool calls in parallel.
+
+   **Note**: `AskClaude` runs `claude -p` on the host. `AskPi` runs `pi -p` in the guest VM where API keys/providers are configured.
 
 ### Phase 2: Active Validation
 
@@ -110,9 +114,7 @@ Do NOT auto-fix style issues, refactoring suggestions, or anything where reasona
 
 If any fixes were applied in Phase 4, run a single verification pass:
 
-```bash
-claude -p "Review these changes and confirm each fix is correct. Just output PASS or FAIL with a brief explanation for each. Changes: $(git diff HEAD)"  > /tmp/review-verify.md
-```
+Use the `AskClaude` tool with the prompt: "Review these changes and confirm each fix is correct. Just output PASS or FAIL with a brief explanation for each. Changes: <git diff HEAD output>"
 
 If any fix fails verification, report to the user and let them decide.
 
