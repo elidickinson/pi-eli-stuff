@@ -1,7 +1,5 @@
 // Shared env-building logic for Gondolin VMs (used by index.ts and shell.ts)
 
-import { execSync } from "node:child_process";
-
 // Pi provider env vars to forward into the guest VM.
 // Mirrors the env var names in pi's getEnvApiKey() (packages/ai/src/env-api-keys.ts).
 const PI_ENV_KEYS = [
@@ -11,30 +9,9 @@ const PI_ENV_KEYS = [
   "MINIMAX_CN_API_KEY", "MISTRAL_API_KEY", "HF_TOKEN", "KIMI_API_KEY",
 ];
 
-/** Extract Claude Code OAuth credentials from macOS Keychain. */
-export function getClaudeOAuthCredentials(): { accessToken?: string; refreshToken?: string } | undefined {
-  try {
-    const json = execSync(
-      'security find-generic-password -s "Claude Code-credentials" -w',
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-    const creds = JSON.parse(json);
-    return {
-      accessToken: creds?.claudeAiOauth?.accessToken,
-      refreshToken: creds?.claudeAiOauth?.refreshToken,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 /** Build the env vars to inject into a Gondolin VM. */
 export function buildVmEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-
-  const oauth = getClaudeOAuthCredentials();
-  if (oauth?.accessToken) env.CLAUDE_CODE_OAUTH_TOKEN = oauth.accessToken;
-  if (oauth?.refreshToken) env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN = oauth.refreshToken;
 
   for (const key of PI_ENV_KEYS) {
     if (process.env[key]) env[key] = process.env[key]!;

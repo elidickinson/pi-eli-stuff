@@ -1,6 +1,6 @@
 #!/usr/bin/env node --experimental-strip-types --no-warnings
 // Boot a Gondolin VM with an interactive bash shell (instead of pi).
-// Same env injection as index.ts (OAuth token, API keys) via shared env.ts.
+// Same env injection as index.ts (API keys) via shared env.ts.
 // Usage: ./shell.ts [mount-dir] [-- extra gondolin args...]
 
 import { execFileSync } from "node:child_process";
@@ -14,7 +14,7 @@ const vmEnv = buildVmEnv();
 const envArgs = Object.entries(vmEnv).flatMap(([k, v]) => ["--env", `${k}=${v}`]);
 
 for (const key of Object.keys(vmEnv)) {
-  console.log(key === "CLAUDE_CODE_OAUTH_TOKEN" ? "Claude OAuth token injected." : `Forwarding ${key}`);
+  console.log(`Forwarding ${key}`);
 }
 
 execFileSync("gondolin", [

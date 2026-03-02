@@ -1,9 +1,7 @@
 /**
- * Pi + Gondolin Sandbox with Claude Code OAuth
+ * Pi + Gondolin Sandbox
  *
- * Runs pi tools inside a Gondolin micro-VM. Automatically extracts the
- * Claude Code OAuth token from the macOS Keychain and passes it to the guest
- * as CLAUDE_CODE_OAUTH_TOKEN.
+ * Runs pi tools inside a Gondolin micro-VM.
  *
  * Usage:
  *   cd /path/to/your/project
@@ -194,7 +192,6 @@ export default function (pi: ExtensionAPI) {
       );
 
       const vmEnv = buildVmEnv();
-      const oauthToken = vmEnv.CLAUDE_CODE_OAUTH_TOKEN;
 
       const imagePath = process.env.GONDOLIN_GUEST_DIR;
       const created = await VM.create({
@@ -224,7 +221,6 @@ export default function (pi: ExtensionAPI) {
       );
       ctx?.ui.notify(
         `Gondolin VM ready. Host ${localCwd} mounted at ${GUEST_WORKSPACE}` +
-          (oauthToken ? " (Claude OAuth injected)" : " (no Claude OAuth found)") +
           (buildInfo ? `\n${buildInfo}` : "\nWarning: no /etc/build-info in guest image"),
         "info",
       );
