@@ -38,7 +38,7 @@ Runs the same code review prompt through 3 different models in parallel, then sy
 
    Run all 3 tool calls in parallel.
 
-   **Note**: `AskClaude` runs `claude -p` on the host. `AskPi` runs `pi -p` in the guest VM where API keys/providers are configured.
+   **Note**: `AskClaude` runs `claude -p` on the host. `AskPi` runs `pi -p` on the host with read-only tools (no extensions).
 
 ### Phase 2: Active Validation
 

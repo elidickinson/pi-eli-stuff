@@ -1,4 +1,5 @@
 vendor/
+.pi/
 .playwright
 node_modules/
 sandbox/guest-image/
