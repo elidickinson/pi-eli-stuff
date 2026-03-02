@@ -106,6 +106,16 @@ After presenting the report:
 
 Do NOT auto-fix style issues, refactoring suggestions, or anything where reasonable people could disagree on the right approach.
 
+### Phase 5: Verify Fixes
+
+If any fixes were applied in Phase 4, run a single verification pass:
+
+```bash
+claude -p "Review these changes and confirm each fix is correct. Just output PASS or FAIL with a brief explanation for each. Changes: $(git diff HEAD)"  > /tmp/review-verify.md
+```
+
+If any fix fails verification, report to the user and let them decide.
+
 ## Key Principles
 
 1. **Model diversity is the point** — different models have different blind spots
