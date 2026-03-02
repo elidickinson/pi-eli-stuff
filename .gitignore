@@ -3,3 +3,5 @@ vendor/
 .playwright
 node_modules/
 sandbox/guest-image/
+.DS_Store
+.claude/

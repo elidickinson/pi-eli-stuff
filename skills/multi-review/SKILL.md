@@ -38,6 +38,13 @@ Runs the same code review prompt through 3 different models in parallel, then sy
 
    Run all 3 tool calls in parallel.
 
+   **As each completes**, output a single-line progress summary:
+   ```
+   Claude complete: Use of dangerous eval() in parser.js#L47, missing null check in db.ts#L12
+   ```
+
+   Show the top 1-2 substantive findings in ~20-30 words.
+
    **Note**: `AskClaude` runs `claude -p` on the host. `AskPi` runs `pi -p` on the host with read-only tools (no extensions).
 
 ### Phase 2: Active Validation

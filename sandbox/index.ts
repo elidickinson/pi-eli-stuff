@@ -37,7 +37,17 @@ function shQuote(value: string): string {
 
 function toGuestPath(localCwd: string, localPath: string): string {
   if (path.isAbsolute(localPath)) {
-    // Absolute path: must be within localCwd
+    // If path is already in guest workspace format (e.g., from recursive tool calls or
+    // paths previously converted), normalize and validate before returning.
+    if (localPath.startsWith(GUEST_WORKSPACE + path.posix.sep) || localPath === GUEST_WORKSPACE) {
+      const normalized = path.posix.normalize(localPath);
+      if (!normalized.startsWith(GUEST_WORKSPACE)) {
+        throw new Error(`path escapes workspace: ${localPath}`);
+      }
+      return normalized;
+    }
+
+    // Absolute path (host format): must be within localCwd
     const rel = path.relative(localCwd, localPath);
     if (rel.startsWith("..") || path.isAbsolute(rel)) {
       throw new Error(`path escapes workspace: ${localPath}`);
