@@ -38,7 +38,8 @@
       "npm install -g @anthropic-ai/claude-code",
       "npm install -g --ignore-scripts @mariozechner/pi-coding-agent",
       "npm install -g https://github.com/elidickinson/browser-cli/archive/refs/heads/main.tar.gz",
-      "mkdir -p /root/.claude && echo '{\"skipDangerousModePermissionPrompt\":true}' > /root/.claude/settings.json",
+      "mkdir -p /etc/skel/.claude && echo '{\"skipDangerousModePermissionPrompt\":true}' > /etc/skel/.claude/settings.json && echo '{\"hasCompletedOnboarding\":true,\"projects\":{\"/workspace\":{\"hasTrustDialogAccepted\":true,\"hasCompletedProjectOnboarding\":true,\"allowedTools\":[]}}}' > /etc/skel/.claude.json",
+      "printf '#!/bin/sh\\ncp -rn /etc/skel/.claude /root/.claude 2>/dev/null; cp -n /etc/skel/.claude.json /root/.claude.json 2>/dev/null\\n' > /etc/profile.d/claude-init.sh && chmod +x /etc/profile.d/claude-init.sh",
       "printf '[safe]\\n\\tdirectory = *\\n' > /etc/gitconfig"
     ]
   }
