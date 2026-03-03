@@ -6,7 +6,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "AskClaude",
     label: "Ask Claude",
-    description: "Send a prompt to Claude Code and return the response.",
+    description: "Send a prompt to Claude Code and return the response. Use by request or if you're really stuck.",
     parameters: Type.Object({
       prompt: Type.String({ description: "The prompt to send" }),
       model: Type.Optional(Type.String({ description: "Model (e.g. opus, sonnet)" })),

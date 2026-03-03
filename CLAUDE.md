@@ -6,7 +6,7 @@ Personal collection of extensions and skills for [pi](https://github.com/ferolog
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (ask-pi, ask-claude)
+├── extensions/      # pi extensions (grep, find, ls, ask-pi, ask-claude)
 ├── skills/          # pi skills (multi-review)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-my-browser/   # Browser automation extension
@@ -15,6 +15,33 @@ pi-my-stuff/
 ```
 
 ## Extensions
+
+### Grep (`extensions/grep.ts`)
+Registers the **grep** tool which searches file contents using ripgrep (rg).
+
+```typescript
+// Usage from within pi
+grep({ pattern: "TODO", glob: "*.ts", ignoreCase: true })
+grep({ pattern: "function.*foo", literal: false, context: 2 })
+```
+
+### Find (`extensions/find.ts`)
+Registers the **find** tool for finding files by glob pattern.
+
+```typescript
+// Usage from within pi
+find({ pattern: "**/*.test.ts" })
+find({ pattern: "src/**/*.json" })
+```
+
+### Ls (`extensions/ls.ts`)
+Registers the **ls** tool for listing directory contents.
+
+```typescript
+// Usage from within pi
+ls({ path: "src" })
+ls({ path: ".", depth: 2 })
+```
 
 ### AskPi (`extensions/ask-pi.ts`)
 Runs pi as a subprocess with read-only tools (no edit/write/bash). Useful for:
@@ -151,6 +178,9 @@ Extensions can be configured globally or per-workspace in `~/.config/pi/pi.json`
 ```json
 {
   "extensions": [
+    "/Users/esd/projects/pi-my-stuff/extensions/grep.ts",
+    "/Users/esd/projects/pi-my-stuff/extensions/find.ts",
+    "/Users/esd/projects/pi-my-stuff/extensions/ls.ts",
     "/Users/esd/projects/pi-my-stuff/extensions/ask-pi.ts",
     "/Users/esd/projects/pi-my-stuff/extensions/ask-claude.ts"
   ],

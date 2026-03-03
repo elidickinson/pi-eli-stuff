@@ -25,7 +25,8 @@
       "libgcc",
       "libstdc++",
       "ripgrep",
-      "git"
+      "git",
+      "github-cli"
     ],
     "initramfsPackages": []
   },
@@ -35,8 +36,7 @@
   "postBuild": {
     "commands": [
       "rm -rf /usr/lib/node_modules/npm && mkdir -p /usr/lib/node_modules/npm && curl -fsSL https://registry.npmjs.org/npm/-/npm-11.2.0.tgz | tar -xz -C /usr/lib/node_modules/npm --strip-components=1",
-      "npm install -g --ignore-scripts @mariozechner/pi-coding-agent",
-      "npm install -g https://github.com/elidickinson/browser-cli/archive/refs/heads/main.tar.gz",
+      "npm install -g https://github.com/elidickinson/browser-cli/archive/refs/heads/dev.tar.gz",
       "printf '[safe]\\n\\tdirectory = *\\n' > /etc/gitconfig"
     ]
   }
