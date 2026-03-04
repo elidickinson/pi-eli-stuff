@@ -31,6 +31,14 @@ pi -e sandbox/index.ts
 | `ls.ts` | List directory contents |
 | `ask-pi.ts` | Run pi as read-only subprocess |
 | `ask-claude.ts` | Run Claude Code as subprocess |
+| `slash-clear.ts` | `/clear` slash command alias |
+
+### Sandbox tools
+
+| Tool | Description |
+|------|-------------|
+| `read`, `write`, `edit`, `bash` | Intercepted to run inside VM |
+| `host_bash` | Execute command on host machine (requires approval) |
 
 ## Sandbox
 
