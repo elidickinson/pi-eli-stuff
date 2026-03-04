@@ -329,9 +329,15 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
+      // Log the full command in chat history before the confirm dialog
+      ctx.ui.notify(`[host_bash] $ ${params.command}\nReason: ${params.reason}`, "info");
+
+      const displayCmd = params.command.length > 200
+        ? params.command.slice(0, 200) + `... (${params.command.length} chars total)`
+        : params.command;
       const confirmed = await ctx.ui.confirm(
         "Host execution requested",
-        `$ ${params.command}\n\nReason: ${params.reason}`,
+        `$ ${displayCmd}\n\nReason: ${params.reason}`,
       );
 
       if (!confirmed) {
