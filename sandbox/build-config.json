@@ -5,7 +5,8 @@
     "USE_BUILTIN_RIPGREP": "0",
     "DISABLE_AUTOUPDATER": "1",
     "DISABLE_TELEMETRY": "1",
-    "BR_AUTOSTART": "1"
+    "BR_AUTOSTART": "1",
+    "UV_PROJECT_ENVIRONMENT": ".venv-sandbox"
   },
   "alpine": {
     "version": "3.23.0",
@@ -37,7 +38,8 @@
     "commands": [
       "rm -rf /usr/lib/node_modules/npm && mkdir -p /usr/lib/node_modules/npm && curl -fsSL https://registry.npmjs.org/npm/-/npm-11.2.0.tgz | tar -xz -C /usr/lib/node_modules/npm --strip-components=1",
       "npm install -g https://github.com/elidickinson/browser-cli/archive/refs/heads/dev.tar.gz",
-      "printf '[safe]\\n\\tdirectory = *\\n' > /etc/gitconfig"
+      "printf '[safe]\\n\\tdirectory = *\\n' > /etc/gitconfig",
+      "printf '.venv-sandbox/\\n' > /etc/gitignore_global && git config --file /etc/gitconfig core.excludesFile /etc/gitignore_global"
     ]
   }
 }
