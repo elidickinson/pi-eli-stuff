@@ -14,6 +14,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 
 import { buildVmEnv } from "./env.ts";
 import {
@@ -302,6 +303,54 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // host_bash: escape hatch for commands that must run on the host (not in the VM).
+  // Every invocation requires explicit user approval via a confirm dialog.
+  pi.registerTool({
+    name: "host_bash",
+    label: "Host Bash",
+    description:
+      "Execute a command on the host machine (outside the sandbox VM). " +
+      "Requires user approval. Use only when the command cannot run inside the VM " +
+      "(e.g., package managers, macOS services, system tools).",
+    parameters: Type.Object({
+      command: Type.String({ description: "The bash command to execute on the host" }),
+      reason: Type.String({
+        description: "One sentence explaining why this must run on the host instead of in the sandbox VM",
+      }),
+      timeout: Type.Optional(
+        Type.Number({ description: "Timeout in seconds (default: 30)" }),
+      ),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      if (!ctx.hasUI) {
+        return {
+          content: [{ type: "text", text: "Host execution is not available in non-interactive mode." }],
+          details: {},
+        };
+      }
+
+      const confirmed = await ctx.ui.confirm(
+        "Host execution requested",
+        `$ ${params.command}\n\nReason: ${params.reason}`,
+      );
+
+      if (!confirmed) {
+        return {
+          content: [{ type: "text", text: "User denied host execution." }],
+          details: {},
+        };
+      }
+
+      // Run on host using the local (non-sandboxed) bash tool
+      return localBash.execute(
+        _id,
+        { command: params.command, timeout: params.timeout ?? 30 },
+        signal,
+        _onUpdate,
+      );
+    },
+  });
+
   pi.on("user_bash", (_event) => {
     if (!vm) return;
     return { operations: createGondolinBashOps(vm, localCwd) };
@@ -321,6 +370,8 @@ Tools available via bash: rg (ripgrep), git, gh (github), curl, python3, node
 All paths are automatically translated between host and guest. Paths cannot escape the workspace.
 
 **Executing workspace binaries:** Use \`uv run python -m <command>\` (FUSE restrictions). \`uv run pytest\` doesn't work - use \`uv run python -m pytest\` instead of \`.venv-sandbox/bin/pytest\`.
+
+**Host access:** Use the \`host_bash\` tool when you need to run commands on the host machine (package managers, system tools, macOS services). You must provide a one-sentence reason. Each command requires user approval.
 `;
     return { systemPrompt: modified + appendix };
   });
