@@ -313,7 +313,15 @@ export default function (pi: ExtensionAPI) {
       `Current working directory: ${localCwd}`,
       `Current working directory: ${GUEST_WORKSPACE} (Gondolin VM, mounted from host: ${localCwd})`,
     );
-    const appendix = "\nTools available via bash: rg (ripgrep), git, gh (github), curl, python3, node";
+    const appendix = `
+## Your Sandbox Environment
+
+Tools available via bash: rg (ripgrep), git, gh (github), curl, python3, node
+
+All paths are automatically translated between host and guest. Paths cannot escape the workspace.
+
+**Executing workspace binaries:** Use \`uv run python -m <command>\` (FUSE restrictions). \`uv run pytest\` doesn't work - use \`uv run python -m pytest\` instead of \`.venv-sandbox/bin/pytest\`.
+`;
     return { systemPrompt: modified + appendix };
   });
 }
