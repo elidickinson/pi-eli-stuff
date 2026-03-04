@@ -2,6 +2,8 @@
 
 Personal collection of extensions and skills for [pi](https://github.com/ferologics/pi), an AI coding agent.
 
+> **Working note:** Use relative paths for file operations (e.g., `sandbox/index.ts`, `CLAUDE.md`). Avoid absolute paths like `/Users/esd/projects/pi-my-stuff/...`.
+
 ## Structure
 
 ```
