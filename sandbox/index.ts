@@ -189,6 +189,36 @@ export default function (pi: ExtensionAPI) {
   let vm: VM | null = null;
   let vmStarting: Promise<VM> | null = null;
 
+  async function closeVm(ctx?: ExtensionContext) {
+    if (!vm) return;
+    const instance = vm;
+    vm = null;
+    vmStarting = null;
+    ctx?.ui?.setStatus(
+      "gondolin",
+      ctx.ui.theme.fg("muted", "Gondolin: stopping"),
+    );
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      await Promise.race([
+        instance.close(),
+        new Promise<void>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("timeout")), 3000);
+        }),
+      ]);
+    } catch (err) {
+      if ((err as Error).message === "timeout") {
+        ctx?.ui?.notify("Gondolin VM shutdown timed out", "warn");
+      } else {
+        throw err;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   async function ensureVm(ctx?: ExtensionContext) {
     if (vm) return vm;
     if (vmStarting) return vmStarting;
@@ -246,17 +276,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (!vm) return;
-    ctx.ui.setStatus(
-      "gondolin",
-      ctx.ui.theme.fg("muted", "Gondolin: stopping"),
-    );
-    try {
-      await vm.close();
-    } finally {
-      vm = null;
-      vmStarting = null;
-    }
+    await closeVm(ctx);
   });
 
   pi.registerTool({
