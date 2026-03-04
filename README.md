@@ -2,115 +2,83 @@
 
 Extensions and skills for [pi](https://github.com/ferologics/pi), an AI coding agent.
 
-## Usage
+## Setup
 
 Add to `~/.config/pi/pi.json`:
 
 ```json
 {
-  "extensions": [
-    "/path/to/pi-my-stuff/extensions/*.ts"
-  ],
+  "extensions": ["extensions/grep.ts", "extensions/find.ts", "extensions/ls.ts"],
   "workspaces": {
-    "/path/to/your/project": {
-      "extensions": [
-        "/path/to/pi-my-stuff/sandbox/index.ts"
-      ]
+    "/path/to/project": {
+      "extensions": ["sandbox/index.ts"]
     }
   }
 }
 ```
 
-Or load from any directory:
+Or load directly:
 ```bash
-pi -e /path/to/pi-my-stuff/sandbox/index.ts
+pi -e sandbox/index.ts
 ```
-
----
 
 ## Extensions
 
 | File | Description |
 |------|-------------|
 | `grep.ts` | File content search via ripgrep |
-| `ask-pi.ts` | Run pi as a read-only subprocess (in sandbox) |
-| `ask-claude.ts` | Run Claude Code as subprocess (on host) |
-| `slash-clear.ts` | `/clear` slash command as alias for `/new`|
-
----
+| `find.ts` | Find files by glob pattern |
+| `ls.ts` | List directory contents |
+| `ask-pi.ts` | Run pi as read-only subprocess |
+| `ask-claude.ts` | Run Claude Code as subprocess |
 
 ## Sandbox
 
-Runs pi tools inside a [Gondolin](https://github.com/earendil-works/gondolin) micro-VM for isolated execution on macOS.
+Runs pi tools inside [Gondolin](https://github.com/earendil-works/gondolin) micro-VMs on macOS.
 
 ### Quick Start
 
-Add this to your shell:
-
+Add to shell:
 ```bash
 pi-sandbox () {
-  GONDOLIN_GUEST_DIR=/Users/esd/projects/pi-my-stuff/sandbox/guest-image \
-  pi -e /Users/esd/projects/pi-my-stuff/sandbox/index.ts "$@"
+  GONDOLIN_GUEST_DIR=sandbox/guest-image pi -e sandbox/index.ts "$@"
 }
 ```
 
-Then run from any project:
+Run from any project:
 ```bash
-cd /path/to/your/project
+cd /path/to/project
 pi-sandbox
 ```
 
 ### How It Works
 
-1. Starts a lightweight Linux VM on session start
-2. Mounts your project directory at `/workspace`
-3. Intercepts all pi tools (read, write, edit, bash)
-4. Paths are auto-translated: host path → guest path
-5. Commands run in the VM with limited filesystem access
+- Spawns VM on session start, mounts project at `/workspace`
+- All pi tools (read, write, edit, bash) run inside VM
+- Paths auto-translated: `/Users/.../src/foo.ts` → `/workspace/src/foo.ts`
+- `host_bash` tool for host commands (requires approval)
 
 ### Guest Image
 
-Alpine 3.23 (aarch64) with:
-- `bash`, `python3`, `node`
-- `ripgrep`, `git`, `gh` (github-cli)
-- `uv` (python package manager)
+Alpine 3.23 (aarch64) with `bash`, `python3`, `node`, `ripgrep`, `git`, `gh`, `uv`.
 
-### Building the Image
-
+Build:
 ```bash
-cd sandbox
-./build.sh
+cd sandbox && ./build.sh
 ```
 
-Creates `sandbox/guest-image/` with a pre-built VM image. Point `GONDOLIN_GUEST_DIR` to it to reuse across sessions.
-
-### Path Security
-
-All paths are validated to prevent escaping the workspace:
-- Absolute host paths resolved relative to project root
-- `../` blocked at boundaries
-- Already-converted guest paths normalized
-
-### Host Access
-
-Use `host_bash` tool for commands that must run on macOS (package managers, system tools). Requires explicit user approval each time.
-
-### Environment
-
-API keys are automatically forwarded from the host. Additional env vars can be injected via `GONDOLIN_ENV_FOO=bar`.
-
----
+Creates `sandbox/guest-image/` for reuse via `GONDOLIN_GUEST_DIR`.
 
 ## Skills
 
-### Multi-Review
+### multi-review
 
-Parallel code review using Claude, DeepSeek, and Kimi. Each model catches different issues, findings are validated, and confirmed bugs are auto-fixed.
+Parallel code review using Claude, DeepSeek, and Kimi. Validate findings, auto-fix confirmed bugs.
 
-Invoke with `/skill:multi-review` or automatically after major changes.
-
----
+Invoke with `/skill:multi-review`.
 
 ## Development
 
-See `vendor/pi-mono/` for pi source code and `vendor/pi-skills/` for example skills.
+- `vendor/pi-mono/` — pi source code and docs
+- `vendor/pi-skills/` — example skills
+- `CLAUDE.md` — detailed documentation
