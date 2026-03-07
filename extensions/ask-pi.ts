@@ -47,7 +47,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "AskPi",
     label: "Ask Pi",
-    description: "Send a prompt to pi and return the response. Read-only: no edit/write/bash tools.",
+    description: "Send a prompt to pi and return the response. Only makes sense to call as a background agent and/or with a different model. Read-only: no edit/write/bash tools.",
     parameters: Type.Object({
       prompt: Type.String({ description: "The prompt to send" }),
       model: Type.Optional(Type.String({
