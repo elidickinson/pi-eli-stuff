@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@earendil-works/gondolin": "^0.5.0",
-    "@mariozechner/pi-coding-agent": "^0.55.3"
+    "@earendil-works/gondolin": "^0.6.0",
+    "@mariozechner/pi-coding-agent": "^0.57.0"
   }
 }

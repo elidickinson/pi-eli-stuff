@@ -1,0 +1,2 @@
+#!/bin/sh
+exec curl_chrome145 -sL "$1" | html2markdown
