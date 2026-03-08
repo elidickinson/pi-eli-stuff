@@ -39,7 +39,8 @@
       "rm -rf /usr/lib/node_modules/npm && mkdir -p /usr/lib/node_modules/npm && curl -fsSL https://registry.npmjs.org/npm/-/npm-11.2.0.tgz | tar -xz -C /usr/lib/node_modules/npm --strip-components=1",
       "npm install -g https://github.com/elidickinson/browser-cli/archive/refs/heads/dev.tar.gz",
       "printf '[safe]\\n\\tdirectory = *\\n' > /etc/gitconfig",
-      "printf '.venv-sandbox/\\n' > /etc/gitignore_global && git config --file /etc/gitconfig core.excludesFile /etc/gitignore_global"
+      "printf '.venv-sandbox/\\n' > /etc/gitignore_global && git config --file /etc/gitconfig core.excludesFile /etc/gitignore_global",
+      "curl -fsSL https://github.com/lexiforest/curl-impersonate/releases/download/v1.5.1/curl-impersonate-v1.5.1.aarch64-linux-musl.tar.gz | tar -xz -C /usr/local/bin"
     ]
   }
 }

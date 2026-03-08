@@ -21,7 +21,7 @@ export default function (pi: ExtensionAPI) {
     }),
     renderCall(args, theme) {
       let text = theme.fg("toolTitle", theme.bold("AskClaude "));
-      const preview = args.prompt.length > 120 ? args.prompt.substring(0, 120) + "..." : args.prompt;
+      const preview = args.prompt.length > 200 ? args.prompt.substring(0, 200) + "..." : args.prompt;
       text += theme.fg("muted", `"${preview}"`);
       if (args.model) text += ` ${theme.fg("accent", `[${args.model}]`)}`;
       return new Text(text, 0, 0);
@@ -32,7 +32,18 @@ export default function (pi: ExtensionAPI) {
       let text = isError
         ? theme.fg("error", `✗ Claude error (exit ${details?.exitCode})`)
         : theme.fg("success", "✓ Claude responded");
-      if (!expanded) return new Text(text, 0, 0);
+
+      const responseText = result.content[0];
+      const firstLine = responseText?.type === "text" && responseText.text
+        ? responseText.text.split("\n")[0]
+        : null;
+
+      if (!expanded) {
+        if (firstLine) {
+          text += ` ${theme.fg("muted", firstLine.substring(0, 150))}${firstLine.length > 150 ? "..." : ""}`;
+        }
+        return new Text(text, 0, 0);
+      }
 
       if (details) {
         text += `\n${theme.fg("dim", `Model: ${details.model}`)}`;
@@ -40,7 +51,6 @@ export default function (pi: ExtensionAPI) {
         text += `\n${theme.fg("dim", `Time: ${(details.executionTime / 1000).toFixed(2)}s`)}`;
       }
 
-      const responseText = result.content[0];
       if (responseText?.type === "text" && responseText.text) {
         text += `\n\n${theme.fg("muted", "─".repeat(40))}\n${responseText.text}`;
       }
