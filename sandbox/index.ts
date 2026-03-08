@@ -235,12 +235,22 @@ export default function (pi: ExtensionAPI) {
       const vmEnv = buildVmEnv();
 
       const imagePath = process.env.GONDOLIN_GUEST_DIR;
+
       const created = await VM.create({
         sandbox: imagePath ? { imagePath } : undefined,
         env: Object.keys(vmEnv).length > 0 ? vmEnv : undefined,
         vfs: {
           mounts: {
             [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
+          },
+        },
+        dns: {
+          mode: "synthetic",
+          syntheticHostMapping: "per-host",
+        },
+        tcp: {
+          hosts: {
+            "sbrowser.sidget.net:443": "sbrowser.sidget.net:443",
           },
         },
       });
