@@ -65,4 +65,20 @@ cd sandbox && ./build.sh
 
 ## Skills
 
-- **multi-review** — Parallel code review using Claude, DeepSeek, and Kimi. Invoke with `/skill:multi-review`.
+| Skill | Description |
+|-------|-------------|
+| `multi-review` | Parallel code review using Claude, DeepSeek, and Kimi |
+| `acpx-claude` | Delegate to Claude via acpx (full tool access) |
+| `br` | Browser automation CLI for web scraping and navigation |
+
+### Installation
+
+Add to `~/.config/pi/pi.json`:
+
+```json
+{
+  "skills": ["/Users/esd/projects/pi-my-stuff/skills"]
+}
+```
+
+Then invoke with `/skill:<name>` (e.g., `/skill:br`, `/skill:acpx-claude`).

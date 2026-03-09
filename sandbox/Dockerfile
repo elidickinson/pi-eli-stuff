@@ -37,6 +37,9 @@ RUN npm install -g @anthropic-ai/claude-code
 # browser-cli
 RUN npm install -g https://github.com/elidickinson/browser-cli/archive/refs/heads/dev.tar.gz
 
+# acpx
+RUN npm install -g acpx@latest
+
 # Guest tools from sandbox/guest-tools/
 COPY guest-tools/ /usr/local/lib/guest-tools/
 RUN chmod +x /usr/local/lib/guest-tools/* \

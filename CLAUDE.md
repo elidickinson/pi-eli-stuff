@@ -145,7 +145,6 @@ Explanation of how it works...
   "extensions": [
     "/Users/esd/projects/pi-my-stuff/extensions/grep.ts",
     "/Users/esd/projects/pi-my-stuff/extensions/find.ts",
-    "/Users/esd/projects/pi-my-stuff/extensions/ls.ts",
     "/Users/esd/projects/pi-my-stuff/extensions/ask-pi.ts",
     "/Users/esd/projects/pi-my-stuff/extensions/ask-claude.ts"
   ],
