@@ -40,6 +40,9 @@ RUN npm install -g https://github.com/elidickinson/browser-cli/archive/refs/head
 # acpx
 RUN npm install -g acpx@latest
 
+# TODO: integrate with install at top
+RUN apk add --no-cache file
+
 # Guest tools from sandbox/guest-tools/
 COPY guest-tools/ /usr/local/lib/guest-tools/
 RUN chmod +x /usr/local/lib/guest-tools/* \
