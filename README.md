@@ -41,13 +41,13 @@ Or add to `~/.config/pi/pi.json`:
 
 ### How It Works
 
-- Spawns VM on session start, mounts project at `/workspace`
+- Spawns VM on session start, mounts project at `/workspace` and `~/.config/pi-sandbox` at `/config`
 - Paths auto-translated: `/Users/.../src/foo.ts` -> `/workspace/src/foo.ts`
 - `host_bash` tool for host commands (requires approval)
 
 ### Guest Image
 
-Alpine 3.23 (aarch64) with bash, python3, node, ripgrep, git, gh, uv, curl-impersonate.
+Alpine 3.23 (aarch64) with bash, python3, node, ripgrep, git, gh, uv, curl-impersonate, claude-code.
 
 ```bash
 cd sandbox && ./build.sh
@@ -59,9 +59,9 @@ cd sandbox && ./build.sh
 |-----------|-------------|
 | `grep.ts` | File content search via ripgrep |
 | `find.ts` | Find files by glob pattern |
-| `ls.ts` | List directory contents |
 | `ask-pi.ts` | Run pi as read-only subprocess |
 | `ask-claude.ts` | Run Claude Code as subprocess |
+| `slash-clear.ts` | `/clear` command (alias for `/new`) |
 
 ## Skills
 

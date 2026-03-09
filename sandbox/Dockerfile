@@ -31,6 +31,9 @@ RUN printf '[safe]\n\tdirectory = *\n' > /etc/gitconfig \
 RUN curl -fsSL https://github.com/lexiforest/curl-impersonate/releases/download/v1.5.1/curl-impersonate-v1.5.1.aarch64-linux-musl.tar.gz \
     | tar -xz -C /usr/local/bin
 
+# Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code
+
 # browser-cli
 RUN npm install -g https://github.com/elidickinson/browser-cli/archive/refs/heads/dev.tar.gz
 

@@ -36,8 +36,19 @@ const GUEST_WORKSPACE = "/workspace";
 const GUEST_CONFIG = "/config";
 const HOST_CONFIG = path.join(os.homedir(), ".config", "pi-sandbox");
 
+function readCachedFile(name: string): string | null {
+  try {
+    const t = fs.readFileSync(path.join(HOST_CONFIG, name), "utf-8").trim();
+    return t || null;
+  } catch { return null; }
+}
+
 function vmCreateOptions(localCwd: string): VMOptions {
   const vmEnv = buildVmEnv();
+  const token = readCachedFile("claude-code-token");
+  if (token) vmEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
+  vmEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "true";
+  vmEnv.DISABLE_INSTALLATION_CHECKS = "1";
   const imagePath = process.env.GONDOLIN_GUEST_DIR;
   return {
     sandbox: imagePath ? { imagePath } : undefined,
@@ -51,6 +62,25 @@ function vmCreateOptions(localCwd: string): VMOptions {
     dns: { mode: "synthetic", syntheticHostMapping: "per-host" },
     tcp: { hosts: { "sbrowser.sidget.net:443": "sbrowser.sidget.net:443" } },
   };
+}
+
+/** Write Claude Code config files in the guest to skip onboarding/login/trust. */
+async function writeClaudeConfig(vm: VM): Promise<void> {
+  const claudeJson: Record<string, unknown> = {
+    hasCompletedOnboarding: true,
+    theme: "dark",
+    numStartups: 1,
+    lastOnboardingVersion: "2.1.71",
+    installMethod: "global",
+    projects: { [GUEST_WORKSPACE]: { hasTrustDialogAccepted: true } },
+  };
+  const account = readCachedFile("claude-code-account.json");
+  if (account) claudeJson.oauthAccount = JSON.parse(account);
+  await vm.fs.writeFile("/root/.claude.json", Buffer.from(JSON.stringify(claudeJson)));
+
+  const settings = { attribution: { commit: "", pr: "" } };
+  await vm.fs.mkdir("/root/.claude", { recursive: true });
+  await vm.fs.writeFile("/root/.claude/settings.json", Buffer.from(JSON.stringify(settings)));
 }
 
 function shQuote(value: string): string {
@@ -256,6 +286,7 @@ export default function (pi: ExtensionAPI) {
       fs.mkdirSync(HOST_CONFIG, { recursive: true });
 
       const created = await VM.create(vmCreateOptions(localCwd));
+      try { await writeClaudeConfig(created); } catch {}
 
       vm = created;
 
@@ -421,6 +452,7 @@ if (isDirectRun) {
   const cwd = process.argv[2] || process.cwd();
   fs.mkdirSync(HOST_CONFIG, { recursive: true });
   const vm = await VM.create(vmCreateOptions(cwd));
+  try { await writeClaudeConfig(vm); } catch {}
   const proc = vm.shell({ attach: true, cwd: GUEST_WORKSPACE });
   const result = await proc;
   await vm.close();
