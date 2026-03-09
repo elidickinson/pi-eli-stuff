@@ -8,6 +8,8 @@
  *   pi -e /path/to/pi-sandbox.ts
  */
 
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type {
@@ -31,6 +33,8 @@ import {
 import { RealFSProvider, VM } from "@earendil-works/gondolin";
 
 const GUEST_WORKSPACE = "/workspace";
+const GUEST_CONFIG = "/config";
+const HOST_CONFIG = path.join(os.homedir(), ".config", "pi-sandbox");
 
 function shQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
@@ -234,6 +238,8 @@ export default function (pi: ExtensionAPI) {
 
       const vmEnv = buildVmEnv();
 
+      fs.mkdirSync(HOST_CONFIG, { recursive: true });
+
       const imagePath = process.env.GONDOLIN_GUEST_DIR;
 
       const created = await VM.create({
@@ -242,6 +248,7 @@ export default function (pi: ExtensionAPI) {
         vfs: {
           mounts: {
             [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
+            [GUEST_CONFIG]: new RealFSProvider(HOST_CONFIG),
           },
         },
         dns: {
