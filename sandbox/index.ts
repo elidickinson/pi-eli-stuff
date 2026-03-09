@@ -30,11 +30,28 @@ import {
   type WriteOperations,
 } from "@mariozechner/pi-coding-agent";
 
-import { RealFSProvider, VM } from "@earendil-works/gondolin";
+import { RealFSProvider, VM, type VMOptions } from "@earendil-works/gondolin";
 
 const GUEST_WORKSPACE = "/workspace";
 const GUEST_CONFIG = "/config";
 const HOST_CONFIG = path.join(os.homedir(), ".config", "pi-sandbox");
+
+function vmCreateOptions(localCwd: string): VMOptions {
+  const vmEnv = buildVmEnv();
+  const imagePath = process.env.GONDOLIN_GUEST_DIR;
+  return {
+    sandbox: imagePath ? { imagePath } : undefined,
+    env: Object.keys(vmEnv).length > 0 ? vmEnv : undefined,
+    vfs: {
+      mounts: {
+        [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
+        [GUEST_CONFIG]: new RealFSProvider(HOST_CONFIG),
+      },
+    },
+    dns: { mode: "synthetic", syntheticHostMapping: "per-host" },
+    tcp: { hosts: { "sbrowser.sidget.net:443": "sbrowser.sidget.net:443" } },
+  };
+}
 
 function shQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
@@ -236,31 +253,9 @@ export default function (pi: ExtensionAPI) {
         ),
       );
 
-      const vmEnv = buildVmEnv();
-
       fs.mkdirSync(HOST_CONFIG, { recursive: true });
 
-      const imagePath = process.env.GONDOLIN_GUEST_DIR;
-
-      const created = await VM.create({
-        sandbox: imagePath ? { imagePath } : undefined,
-        env: Object.keys(vmEnv).length > 0 ? vmEnv : undefined,
-        vfs: {
-          mounts: {
-            [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
-            [GUEST_CONFIG]: new RealFSProvider(HOST_CONFIG),
-          },
-        },
-        dns: {
-          mode: "synthetic",
-          syntheticHostMapping: "per-host",
-        },
-        tcp: {
-          hosts: {
-            "sbrowser.sidget.net:443": "sbrowser.sidget.net:443",
-          },
-        },
-      });
+      const created = await VM.create(vmCreateOptions(localCwd));
 
       vm = created;
 
@@ -418,4 +413,16 @@ All paths are automatically translated between host and guest. Paths cannot esca
 `;
     return { systemPrompt: modified + appendix };
   });
+}
+
+// When run directly (not imported as extension): interactive shell
+const isDirectRun = import.meta.filename === process.argv[1];
+if (isDirectRun) {
+  const cwd = process.argv[2] || process.cwd();
+  fs.mkdirSync(HOST_CONFIG, { recursive: true });
+  const vm = await VM.create(vmCreateOptions(cwd));
+  const proc = vm.shell({ attach: true, cwd: GUEST_WORKSPACE });
+  const result = await proc;
+  await vm.close();
+  process.exit(result.exitCode);
 }
