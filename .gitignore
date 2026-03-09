@@ -6,3 +6,4 @@ sandbox/guest-image/
 .DS_Store
 .claude/
 pi-my-browser/
+tmp/
