@@ -232,6 +232,8 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
 export default function (pi: ExtensionAPI) {
   const localCwd = process.cwd();
 
+  // Local tool instances — used for tool metadata (name, description, parameters)
+  // and as the host execution backend for host_bash. Never exposed to the agent directly.
   const localRead = createReadTool(localCwd);
   const localWrite = createWriteTool(localCwd);
   const localEdit = createEditTool(localCwd);
@@ -322,6 +324,8 @@ export default function (pi: ExtensionAPI) {
     await closeVm(ctx);
   });
 
+  // Override pi's built-in tools to run inside the VM instead of on the host.
+  // Spreads local tool metadata (name, description, parameters) but replaces execute.
   pi.registerTool({
     ...localRead,
     async execute(id, params, signal, onUpdate, ctx) {
@@ -355,6 +359,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // Agent bash — runs in VM (see also user_bash hook below for interactive shell)
   pi.registerTool({
     ...localBash,
     async execute(id, params, signal, onUpdate, ctx) {
@@ -367,14 +372,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   // host_bash: escape hatch for commands that must run on the host (not in the VM).
-  // Every invocation requires explicit user approval via a confirm dialog.
+  // Delegates to localBash after explicit user approval via confirm dialog.
   pi.registerTool({
     name: "host_bash",
     label: "Host Bash",
     description:
       "Execute a command on the host machine (outside the sandbox VM). " +
-      "Requires user approval. Use only when the command cannot run inside the VM " +
-      "(e.g., package managers, macOS services, system tools).",
+      "Requires user approval. Avoid in general use; only for commands that can't be run in a sandbox VM." +
+      "",
     parameters: Type.Object({
       command: Type.String({ description: "The bash command to execute on the host" }),
       reason: Type.String({
@@ -420,6 +425,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // User's interactive shell (! command in TUI) — also runs in VM, same backend as agent bash
   pi.on("user_bash", (_event) => {
     if (!vm) return;
     return { operations: createGondolinBashOps(vm, localCwd) };
@@ -434,13 +440,13 @@ export default function (pi: ExtensionAPI) {
     const appendix = `
 ## Your Sandbox Environment
 
-Tools available via bash: rg (ripgrep), git, gh (github), curl, python3, node
+Notable tools available via bash: rg (ripgrep), git, gh (github), curl, python3, node
 
-All paths are automatically translated between host and guest. Paths cannot escape the workspace.
+All paths should be within /workspace. Paths cannot escape the workspace.
 
 **Executing workspace binaries:** Use \`uv run python -m <command>\` (FUSE restrictions). \`uv run pytest\` doesn't work - use \`uv run python -m pytest\` instead of \`.venv-sandbox/bin/pytest\`.
 
-**Host access:** Use the \`host_bash\` tool when you need to run commands on the host machine (package managers, system tools, macOS services). You must provide a one-sentence reason. Each command requires user approval.
+**Host access:** \`user_bash\` is the correct tool 99% of the time, but there's also \`host_bash\` tool when you need to run commands on the host machine (e.g. access a directory outside the project, or manipulate docker).
 `;
     return { systemPrompt: modified + appendix };
   });
