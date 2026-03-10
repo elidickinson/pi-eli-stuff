@@ -4,36 +4,42 @@ import { keyHint } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
-interface ClaudeAcpDetails {
-  session_name?: string;
-  promptLength: number;
+interface AcpxResult {
+  text: string;
+  exitCode: number | undefined;
   executionTime: number;
-  exitCode?: number;
 }
 
-/** Run a one-shot acpx claude exec prompt, returning { text, exitCode, executionTime }. */
-function runClaudeExec(
-  prompt: string,
-  signal?: AbortSignal,
-): Promise<{ text: string; exitCode: number | undefined; executionTime: number }> {
+interface SpawnAcpxOptions {
+  args: string[];
+  prompt: string;
+  signal?: AbortSignal;
+  onStdout?: (accumulated: string) => void;
+}
+
+/** Spawn acpx with args, pipe prompt via stdin, collect output. */
+function spawnAcpx(opts: SpawnAcpxOptions): Promise<AcpxResult> {
   const startTime = Date.now();
   return new Promise((resolve, reject) => {
-    const proc = spawn("acpx", ["--format", "quiet", "--approve-reads", "claude", "exec", "--file", "-"], {
+    const proc = spawn("acpx", opts.args, {
       cwd: process.cwd(),
       stdio: ["pipe", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
-    proc.stdout.on("data", (chunk: Buffer) => (stdout += chunk));
+    proc.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk;
+      opts.onStdout?.(stdout);
+    });
     proc.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
 
     const onAbort = () => proc.kill();
-    signal?.addEventListener("abort", onAbort, { once: true });
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
 
     proc.on("close", (code) => {
-      signal?.removeEventListener("abort", onAbort);
-      if (signal?.aborted) return reject(new Error("aborted"));
+      opts.signal?.removeEventListener("abort", onAbort);
+      if (opts.signal?.aborted) return reject(new Error("aborted"));
       resolve({
         text: stdout.trim() || stderr.trim() || `(exit ${code})`,
         exitCode: code ?? undefined,
@@ -42,9 +48,63 @@ function runClaudeExec(
     });
     proc.on("error", reject);
 
-    proc.stdin.write(prompt);
+    proc.stdin.write(opts.prompt);
     proc.stdin.end();
   });
+}
+
+/** Ensure a named session exists, with timeout. */
+function ensureSession(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      proc.kill();
+      reject(new Error("sessions ensure timed out"));
+    }, 10000);
+
+    const proc = spawn("acpx", ["claude", "sessions", "ensure", "--name", name], {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: process.cwd(),
+    });
+    let stderr = "";
+    proc.stderr?.on("data", (c: Buffer) => (stderr += c));
+    proc.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve();
+      else reject(new Error(stderr || `sessions ensure failed with code ${code}`));
+    });
+    proc.on("error", (e) => {
+      clearTimeout(timeout);
+      reject(e);
+    });
+  });
+}
+
+// --- Render helpers ---
+
+type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>>[2];
+
+function statusText(theme: Theme, exitCode: number | undefined, label: string, responseText?: string): string {
+  const isError = exitCode != null && exitCode !== 0;
+  if (!isError) return theme.fg("success", `✓ ${label}`);
+  let text = theme.fg("error", `✗ ${label} (exit ${exitCode})`);
+  if (responseText) {
+    text += ` ${theme.fg("muted", firstLinePreview(responseText, 120))}`;
+  }
+  return text;
+}
+
+function firstLinePreview(text: string, maxLen = 150): string {
+  const line = text.split("\n")[0] || "";
+  return line.length > maxLen ? line.substring(0, maxLen) + "..." : line;
+}
+
+// --- Extension ---
+
+interface ClaudeAcpDetails {
+  session_name?: string;
+  promptLength: number;
+  executionTime: number;
+  exitCode?: number;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -53,20 +113,12 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerMessageRenderer(CLAUDE_MSG_TYPE, (message, { expanded }, theme) => {
     const details = message.details as { executionTime: number; exitCode?: number } | undefined;
-    const isError = details?.exitCode != null && details.exitCode !== 0;
-    let text = isError
-      ? theme.fg("error", `✗ Claude error (exit ${details?.exitCode})`)
-      : theme.fg("success", "✓ Claude");
+    const content = typeof message.content === "string" ? message.content : message.content[0]?.text || "";
+    let text = statusText(theme, details?.exitCode, "Claude", content);
     if (details?.executionTime) {
       text += theme.fg("dim", ` ${(details.executionTime / 1000).toFixed(1)}s`);
     }
-    const content = typeof message.content === "string" ? message.content : message.content[0]?.text || "";
-    if (!expanded) {
-      const firstLine = content.split("\n")[0] || "";
-      text += ` ${theme.fg("muted", firstLine.substring(0, 150))}${firstLine.length > 150 ? "..." : ""}`;
-    } else {
-      text += `\n\n${content}`;
-    }
+    if (content) text += `\n\n${content}`;
     return new Text(text, 0, 0);
   });
 
@@ -79,7 +131,10 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       ctx.ui.notify("⟳ Asking Claude...", "info");
-      const result = await runClaudeExec(prompt);
+      const result = await spawnAcpx({
+        args: ["--format", "quiet", "--approve-reads", "claude", "exec", "--file", "-"],
+        prompt,
+      });
       pi.sendMessage(
         {
           customType: CLAUDE_MSG_TYPE,
@@ -91,6 +146,7 @@ export default function (pi: ExtensionAPI) {
       );
     },
   });
+
   pi.registerTool({
     name: "ClaudeAcp",
     label: "Claude ACP",
@@ -154,21 +210,12 @@ export default function (pi: ExtensionAPI) {
         return new Text(text, 0, 0);
       }
 
-      const isError = details?.exitCode != null && details.exitCode !== 0;
-      let text = isError
-        ? theme.fg("error", `✗ Claude ACP error (exit ${details?.exitCode})`)
-        : theme.fg("success", "✓ Claude responded");
-
       const responseText = result.content[0];
-      const firstLine =
-        responseText?.type === "text" && responseText.text
-          ? responseText.text.split("\n")[0]
-          : null;
+      const content = responseText?.type === "text" ? responseText.text : "";
+      let text = statusText(theme, details?.exitCode, "Claude responded", content);
 
       if (!expanded) {
-        if (firstLine) {
-          text += ` ${theme.fg("muted", firstLine.substring(0, 150))}${firstLine.length > 150 ? "..." : ""}`;
-        }
+        if (content) text += ` ${theme.fg("muted", firstLinePreview(content))}`;
         text += ` (${keyHint("expandTools", "for details")})`;
         return new Text(text, 0, 0);
       }
@@ -180,74 +227,32 @@ export default function (pi: ExtensionAPI) {
         text += `\n${theme.fg("dim", `Time: ${(details.executionTime / 1000).toFixed(2)}s`)}`;
       }
 
-      if (responseText?.type === "text" && responseText.text) {
-        text += `\n\n${theme.fg("muted", "─".repeat(40))}\n${responseText.text}`;
+      if (content) {
+        text += `\n\n${theme.fg("muted", "─".repeat(40))}\n${content}`;
       }
       return new Text(text, 0, 0);
     },
     async execute(id, params, signal, onUpdate) {
-      const startTime = Date.now();
       const sessionName = params.session_name && params.session_name !== "undefined" ? params.session_name : undefined;
 
-      // Auto-create session if needed
-      if (sessionName) {
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            proc.kill();
-            reject(new Error("sessions ensure timed out"));
-          }, 10000);
+      if (sessionName) await ensureSession(sessionName);
 
-          const proc = spawn("acpx", ["claude", "sessions", "ensure", "--name", sessionName!], {
-            stdio: ["ignore", "pipe", "pipe"],
-            cwd: process.cwd(),
-          });
-          let stderr = "";
-          proc.stderr?.on("data", (c) => (stderr += c));
-          proc.on("close", (code) => {
-            clearTimeout(timeout);
-            if (code === 0) resolve();
-            else reject(new Error(stderr || `sessions ensure failed with code ${code}`));
-          });
-          proc.on("error", (e) => {
-            clearTimeout(timeout);
-            reject(e);
-          });
-        });
-      }
-
-      // Build acpx args: acpx [--format quiet] [--permissions] [--timeout N] claude [-s session | exec] [--no-wait] --file -
-      const args: string[] = [];
-
-      // Use quiet format to get clean output
-      args.push("--format", "quiet");
-
-      const perm = params.permissions || "approve-reads";
-      args.push(`--${perm}`);
-
+      // Build acpx args
+      const args: string[] = ["--format", "quiet"];
+      args.push(`--${params.permissions || "approve-reads"}`);
       if (params.timeout) args.push("--timeout", String(params.timeout));
-
       args.push("claude");
-
-      if (params.oneShot) {
-        args.push("exec");
-      } else if (sessionName) {
-        args.push("-s", sessionName);
-      }
-
+      if (params.oneShot) args.push("exec");
+      else if (sessionName) args.push("-s", sessionName);
       if (params.noWait) args.push("--no-wait");
-
       args.push("--file", "-");
 
-      return new Promise((resolve, reject) => {
-        const proc = spawn("acpx", args, {
-          cwd: process.cwd(),
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-
-        let stdout = "";
-        let stderr = "";
-        proc.stdout.on("data", (chunk: Buffer) => {
-          stdout += chunk;
+      const startTime = Date.now();
+      const result = await spawnAcpx({
+        args,
+        prompt: params.prompt,
+        signal,
+        onStdout(stdout) {
           onUpdate?.({
             content: [{ type: "text", text: stdout.trim() }],
             details: {
@@ -256,33 +261,16 @@ export default function (pi: ExtensionAPI) {
               executionTime: Date.now() - startTime,
             } satisfies ClaudeAcpDetails,
           });
-        });
-        proc.stderr.on("data", (chunk: Buffer) => {
-          stderr += chunk;
-        });
-
-        const onAbort = () => proc.kill();
-        signal?.addEventListener("abort", onAbort, { once: true });
-
-        proc.on("close", (code) => {
-          signal?.removeEventListener("abort", onAbort);
-          if (signal?.aborted) return reject(new Error("aborted"));
-          const text = stdout.trim() || stderr.trim() || `(exit ${code})`;
-          const details: ClaudeAcpDetails = {
-            session_name: sessionName,
-            promptLength: params.prompt.length,
-            executionTime: Date.now() - startTime,
-            exitCode: code ?? undefined,
-          };
-          resolve({ content: [{ type: "text", text }], details });
-        });
-
-        proc.on("error", reject);
-
-        // Write prompt to stdin and close
-        proc.stdin.write(params.prompt);
-        proc.stdin.end();
+        },
       });
+
+      const details: ClaudeAcpDetails = {
+        session_name: sessionName,
+        promptLength: params.prompt.length,
+        executionTime: result.executionTime,
+        exitCode: result.exitCode,
+      };
+      return { content: [{ type: "text", text: result.text }], details };
     },
   });
 }
