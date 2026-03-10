@@ -43,28 +43,22 @@ Runs parallel web research via multiple agents and synthesizes findings into a c
    ```
    Write all research files to `$OUTPUT_DIR/research-TOPIC-*.md`
 
-6. **Create Claude session.** Before spawning agents, create the named session:
-   ```bash
-   acpx claude sessions new --name research-TOPIC-claude
-   # Substitute TOPIC with the slug from step 4
-   ```
-
 ---
 
 ## Phase 1: Parallel Research
 
-**Spawn all subagents before waiting for any to complete.** This ensures parallel execution.
+**Spawn all subagents at once without waiting for any to complete so they work in parallel.**
 
 Replace `TOPIC`, `RESEARCH_PROMPT`, and `$OUTPUT_DIR` with the values from Phase 0 before executing.
 
 ### Subagent 1: Claude Web (always)
 
-Use the `ClaudeACP` tool (from `@extensions/claude-acp.ts`) to spawn Claude Web research.
+Create a subagent that uses the `ClaudeAcp` tool (from `@extensions/claude-acp.ts`) to do research with claude.
 
-**Session:** `research-TOPIC-claude` (must be created in Phase 0 step 6)
+**Session:** `research-TOPIC-claude` (auto-created by the tool)
 
 ```
-ClaudeACP({
+ClaudeAcp({
   prompt: "RESEARCH_PROMPT
 
 Research this topic thoroughly using web search. Write your findings to $OUTPUT_DIR/research-TOPIC-claude-web.md using this format:
@@ -84,7 +78,7 @@ Research this topic thoroughly using web search. Write your findings to $OUTPUT_
 CRITICAL RULE: You are a research GATHERING agent, NOT an analyst. Do NOT synthesize, analyze, or draw conclusions. Report what you find with sources. Flag conflicts. That's it.
 
 The synthesis happens in Phase 2 by the orchestrator who has access to all agent outputs.",
-  session: "research-TOPIC-claude",
+  session_name: "research-TOPIC-claude",
   permissions: "approve-all",
   timeout: 300
 })
@@ -92,7 +86,7 @@ The synthesis happens in Phase 2 by the orchestrator who has access to all agent
 
 ### Subagent 2: Pi Web (always)
 
-Agent tool (general-purpose subagent):
+Create a subagent that uses a prompt like:
 ```
 RESEARCH_PROMPT
 
@@ -117,7 +111,7 @@ CRITICAL RULE: Do NOT synthesize or analyze. Just report findings with sources.
 
 **Only spawn if** the task involves sites that block automated search agents or require on-site interaction. Examples: TripAdvisor, restaurant reservations, booking sites, directory sites, forums with custom search, price comparison requiring navigation.
 
-Agent tool (general-purpose subagent):
+Create a subagent with a prompt like:
 ```
 RESEARCH_PROMPT
 
