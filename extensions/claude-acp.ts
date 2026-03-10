@@ -11,7 +11,86 @@ interface ClaudeAcpDetails {
   exitCode?: number;
 }
 
+/** Run a one-shot acpx claude exec prompt, returning { text, exitCode, executionTime }. */
+function runClaudeExec(
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<{ text: string; exitCode: number | undefined; executionTime: number }> {
+  const startTime = Date.now();
+  return new Promise((resolve, reject) => {
+    const proc = spawn("acpx", ["--format", "quiet", "--approve-reads", "claude", "exec", "--file", "-"], {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk: Buffer) => (stdout += chunk));
+    proc.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+
+    const onAbort = () => proc.kill();
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    proc.on("close", (code) => {
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) return reject(new Error("aborted"));
+      resolve({
+        text: stdout.trim() || stderr.trim() || `(exit ${code})`,
+        exitCode: code ?? undefined,
+        executionTime: Date.now() - startTime,
+      });
+    });
+    proc.on("error", reject);
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+  });
+}
+
 export default function (pi: ExtensionAPI) {
+  // /claude slash command — inline one-shot, result stays in context
+  const CLAUDE_MSG_TYPE = "claude-acp-response";
+
+  pi.registerMessageRenderer(CLAUDE_MSG_TYPE, (message, { expanded }, theme) => {
+    const details = message.details as { executionTime: number; exitCode?: number } | undefined;
+    const isError = details?.exitCode != null && details.exitCode !== 0;
+    let text = isError
+      ? theme.fg("error", `✗ Claude error (exit ${details?.exitCode})`)
+      : theme.fg("success", "✓ Claude");
+    if (details?.executionTime) {
+      text += theme.fg("dim", ` ${(details.executionTime / 1000).toFixed(1)}s`);
+    }
+    const content = typeof message.content === "string" ? message.content : message.content[0]?.text || "";
+    if (!expanded) {
+      const firstLine = content.split("\n")[0] || "";
+      text += ` ${theme.fg("muted", firstLine.substring(0, 150))}${firstLine.length > 150 ? "..." : ""}`;
+    } else {
+      text += `\n\n${content}`;
+    }
+    return new Text(text, 0, 0);
+  });
+
+  pi.registerCommand("claude", {
+    description: "Ask Claude a quick question (one-shot, result stays in context)",
+    async handler(args, ctx) {
+      const prompt = args.trim();
+      if (!prompt) {
+        ctx.ui.notify("Usage: /claude <question>", "warning");
+        return;
+      }
+      ctx.ui.notify("⟳ Asking Claude...", "info");
+      const result = await runClaudeExec(prompt);
+      pi.sendMessage(
+        {
+          customType: CLAUDE_MSG_TYPE,
+          content: result.text,
+          display: true,
+          details: { executionTime: result.executionTime, exitCode: result.exitCode },
+        },
+        { triggerTurn: false },
+      );
+    },
+  });
   pi.registerTool({
     name: "ClaudeAcp",
     label: "Claude ACP",
