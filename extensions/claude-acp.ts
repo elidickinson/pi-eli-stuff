@@ -102,6 +102,7 @@ function firstLinePreview(text: string, maxLen = 150): string {
 
 interface ClaudeAcpDetails {
   session_name?: string;
+  prompt: string;
   promptLength: number;
   executionTime: number;
   exitCode?: number;
@@ -112,9 +113,11 @@ export default function (pi: ExtensionAPI) {
   const CLAUDE_MSG_TYPE = "claude-acp-response";
 
   pi.registerMessageRenderer(CLAUDE_MSG_TYPE, (message, { expanded }, theme) => {
-    const details = message.details as { executionTime: number; exitCode?: number } | undefined;
+    const details = message.details as { prompt?: string; executionTime: number; exitCode?: number } | undefined;
     const content = typeof message.content === "string" ? message.content : message.content[0]?.text || "";
-    let text = statusText(theme, details?.exitCode, "Claude", content);
+    let text = "";
+    if (details?.prompt) text += theme.fg("accent", "/claude ") + details.prompt + "\n\n";
+    text += statusText(theme, details?.exitCode, "Claude", content);
     if (details?.executionTime) {
       text += theme.fg("dim", ` ${(details.executionTime / 1000).toFixed(1)}s`);
     }
@@ -140,7 +143,7 @@ export default function (pi: ExtensionAPI) {
           customType: CLAUDE_MSG_TYPE,
           content: result.text,
           display: true,
-          details: { executionTime: result.executionTime, exitCode: result.exitCode },
+          details: { prompt, executionTime: result.executionTime, exitCode: result.exitCode },
         },
         { triggerTurn: false },
       );
@@ -223,12 +226,13 @@ export default function (pi: ExtensionAPI) {
       if (details) {
         if (details.session_name)
           text += `\n${theme.fg("dim", `Session: ${details.session_name}`)}`;
-        text += `\n${theme.fg("dim", `Prompt: ${details.promptLength} chars`)}`;
         text += `\n${theme.fg("dim", `Time: ${(details.executionTime / 1000).toFixed(2)}s`)}`;
+        text += `\n\n${theme.fg("muted", "─ Prompt (" + details.promptLength + " chars) " + "─".repeat(Math.max(0, 26 - String(details.promptLength).length)))}`;
+        text += `\n${details.prompt}`;
       }
 
       if (content) {
-        text += `\n\n${theme.fg("muted", "─".repeat(40))}\n${content}`;
+        text += `\n\n${theme.fg("muted", "─ Response " + "─".repeat(29))}\n${content}`;
       }
       return new Text(text, 0, 0);
     },
@@ -257,6 +261,7 @@ export default function (pi: ExtensionAPI) {
             content: [{ type: "text", text: stdout.trim() }],
             details: {
               session_name: sessionName,
+              prompt: params.prompt,
               promptLength: params.prompt.length,
               executionTime: Date.now() - startTime,
             } satisfies ClaudeAcpDetails,
@@ -266,6 +271,7 @@ export default function (pi: ExtensionAPI) {
 
       const details: ClaudeAcpDetails = {
         session_name: sessionName,
+        prompt: params.prompt,
         promptLength: params.prompt.length,
         executionTime: result.executionTime,
         exitCode: result.exitCode,
