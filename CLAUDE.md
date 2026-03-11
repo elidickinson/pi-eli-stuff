@@ -8,7 +8,7 @@ Personal collection of extensions and skills for [pi](https://github.com/ferolog
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, activity, slash-clear)
+├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, activity, llm-perf, slash-clear)
 ├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-my-browser/   # Browser automation extension
@@ -182,6 +182,19 @@ Track what you're working on with a custom status displayed in the footer.
 ```
 
 Status persists across session forks and resumes - the status text is stored in the session and restored when you fork or resume.
+
+### LLM Perf
+
+Passively tracks LLM responsiveness metrics (TTFT, latency, throughput, cost) per model/provider. Data stored in `~/.pi/agent/llm-perf.db` (SQLite, WAL mode).
+
+```bash
+/llm-perf              # Last 24h, all models
+/llm-perf week         # Last 7 days
+/llm-perf week sonnet  # Last 7 days, models matching "sonnet"
+/llm-perf purge 30d    # Delete entries older than 30 days
+```
+
+Debug logging: `LLM_PERF_DEBUG=1`
 
 ## Reference
 
