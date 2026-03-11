@@ -17,7 +17,7 @@ import { Text } from "@mariozechner/pi-tui";
 import { randomUUID } from "node:crypto";
 import { handleTurnStart, handleMessageStart, handleMessageUpdate, handleMessageEnd, type PendingCall } from "./state-machine.js";
 import { getDbPath, openDb, insertCall, queryCalls, purgeBefore, getDistinctModels } from "./db.js";
-import { computeModelStats, formatReport } from "./stats.js";
+import { computeModelStats, formatReportHorizontal, type TimeRangeStats } from "./stats.js";
 import type Database from "better-sqlite3";
 
 const DEBUG = process.env.LLM_PERF_DEBUG === "1";
@@ -28,11 +28,9 @@ function debug(...args: unknown[]) {
 
 // ── Argument parsing ──
 
-const TIME_RANGES: Record<string, number> = {
-	"24h": 24 * 60 * 60 * 1000,
-	"week": 7 * 24 * 60 * 60 * 1000,
-	"month": 30 * 24 * 60 * 60 * 1000,
-};
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
 
 function parseDuration(s: string): number | null {
 	const m = s.match(/^(\d+)([dhm])$/);
@@ -56,7 +54,7 @@ interface ParsedArgs {
 function parseArgs(raw: string): ParsedArgs {
 	const parts = raw.trim().split(/\s+/).filter(Boolean);
 	let timeLabel = "last 24h";
-	let sinceMs = Date.now() - TIME_RANGES["24h"];
+	let sinceMs = Date.now() - DAY;
 	let modelFilter: string | undefined;
 
 	if (parts[0] === "purge" && parts[1]) {
@@ -68,11 +66,14 @@ function parseArgs(raw: string): ParsedArgs {
 		if (p === "all") {
 			timeLabel = "all time";
 			sinceMs = 0;
-		} else if (TIME_RANGES[p]) {
-			timeLabel = `last ${p}`;
-			sinceMs = Date.now() - TIME_RANGES[p];
 		} else {
-			modelFilter = p;
+			const dur = parseDuration(p);
+			if (dur) {
+				timeLabel = `last ${p}`;
+				sinceMs = Date.now() - dur;
+			} else {
+				modelFilter = p;
+			}
 		}
 	}
 
@@ -159,9 +160,10 @@ export default function (pi: ExtensionAPI) {
 	// ── Command ──
 
 	pi.registerCommand("llm-perf", {
-		description: "Show LLM performance stats. Usage: /llm-perf [24h|week|month|all] [model-filter] | purge <duration>",
+		description: "Show LLM performance stats. Usage: /llm-perf [model-filter] [Xh|Xd|Xm|all] | purge <duration>",
 		getArgumentCompletions(prefix) {
-			const items = ["week", "month", "all", "purge"];
+			if (!prefix) return [];
+			const items = ["all", "purge"];
 			const d = getDb();
 			if (d) {
 				try {
@@ -187,10 +189,24 @@ export default function (pi: ExtensionAPI) {
 			const d = getDb();
 			if (!d) { ctx.ui.notify("DB not available", "error"); return; }
 
-			const rows = queryCalls(d, { sinceMs: parsed.sinceMs, modelFilter: parsed.modelFilter });
-			const stats = computeModelStats(rows);
-			const report = formatReport(stats, parsed.timeLabel, ctx.ui.theme);
+			const now = Date.now();
+			const defaultRanges = [
+				{ label: "Last Hour", sinceMs: now - HOUR },
+				{ label: "Last 24h", sinceMs: now - DAY },
+				{ label: "Last Week", sinceMs: now - WEEK },
+			];
+			// Custom time range (e.g. /llm-perf month) → single group; otherwise show all 3
+			const hasTimeArg = parsed.timeLabel !== "last 24h";
+			const timeRanges = hasTimeArg
+				? [{ label: parsed.timeLabel, sinceMs: parsed.sinceMs }]
+				: defaultRanges;
+			const ranges: TimeRangeStats[] = timeRanges.map(({ label, sinceMs }) => {
+				const rows = queryCalls(d, { sinceMs, modelFilter: parsed.modelFilter });
+				const stats = computeModelStats(rows);
+				return { label, sinceMs, stats };
+			});
 
+			const report = formatReportHorizontal(ranges, ctx.ui.theme);
 			pi.sendMessage(
 				{ customType: MSG_TYPE, content: report, display: true, details: {} },
 				{ triggerTurn: false },

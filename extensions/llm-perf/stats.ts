@@ -4,6 +4,8 @@ export interface ModelStats {
 	provider: string;
 	model: string;
 	calls: number;
+	aborts: number;
+	inputTokP50: number | null;
 	ttftP50: number | null;
 	durationP50: number | null;
 	tokPerSec: number | null;
@@ -30,10 +32,24 @@ export function computeModelStats(rows: LlmCallRow[]): ModelStats[] {
 		const [provider, ...modelParts] = key.split("/");
 		const model = modelParts.join("/");
 
-		const ttfts = modelRows.map((r) => r.ttft_ms).filter((v): v is number => v != null).sort((a, b) => a - b);
-		const durations = modelRows.map((r) => r.duration_ms).filter((v): v is number => v != null).sort((a, b) => a - b);
+		const completed = modelRows.filter((r) => r.stop_reason !== "aborted");
+		const aborts = modelRows.length - completed.length;
 
-		const tokPerSecValues = modelRows
+		// Total input context = input_tokens + cache_read + cache_write.
+		// Providers split these differently: some report the full context in input_tokens,
+		// others (e.g. MiniMax) report only non-cached tokens there (often single digits)
+		// with the bulk in cache_read/cache_write. Summing all three gives the true context size.
+		const inputToks = completed
+			.map((r) => {
+				const t = (r.input_tokens ?? 0) + (r.cache_read ?? 0) + (r.cache_write ?? 0);
+				return t > 0 ? t : null;
+			})
+			.filter((v): v is number => v != null)
+			.sort((a, b) => a - b);
+		const ttfts = completed.map((r) => r.ttft_ms).filter((v): v is number => v != null).sort((a, b) => a - b);
+		const durations = completed.map((r) => r.duration_ms).filter((v): v is number => v != null).sort((a, b) => a - b);
+
+		const tokPerSecValues = completed
 			.filter((r) => r.output_tokens != null && r.duration_ms != null && r.duration_ms > 0)
 			.map((r) => r.output_tokens! / (r.duration_ms! / 1000))
 			.sort((a, b) => a - b);
@@ -41,7 +57,9 @@ export function computeModelStats(rows: LlmCallRow[]): ModelStats[] {
 		stats.push({
 			provider,
 			model,
-			calls: modelRows.length,
+			calls: completed.length,
+			aborts,
+			inputTokP50: inputToks.length > 0 ? percentile(inputToks, 0.5) : null,
 			ttftP50: ttfts.length > 0 ? percentile(ttfts, 0.5) : null,
 			durationP50: durations.length > 0 ? percentile(durations, 0.5) : null,
 			tokPerSec: tokPerSecValues.length > 0 ? percentile(tokPerSecValues, 0.5) : null,
@@ -58,6 +76,12 @@ export interface TimeRangeStats {
 	label: string;
 	sinceMs: number;
 	stats: ModelStats[];
+}
+
+function formatTokK(v: number | null): string {
+	if (v == null) return " —";
+	if (v < 1000) return String(Math.round(v));
+	return `${(v / 1000).toFixed(0)}k`;
 }
 
 function formatMs(ms: number | null): string {
@@ -123,22 +147,20 @@ export function formatReportHorizontal(ranges: TimeRangeStats[], theme: any): st
 	const groupSep = "  │ ";
 	let headerLine = "Model".padEnd(modelW);
 	for (const range of ranges) {
-		headerLine += " " + "Calls".padEnd(colW) + "  " + "TTFT".padEnd(colW) + " " + "Tok/s".padEnd(colW);
+		headerLine += " " + "Calls".padEnd(colW) + " " + "Abrt".padEnd(colW) + " " + "InTok".padEnd(colW) + "  " + "TTFT".padEnd(colW) + " " + "Tok/s".padEnd(colW);
 		if (range !== ranges[ranges.length - 1]) {
 			headerLine += groupSep;
 		}
 	}
 
-	// Build range line: "Last Hour" aligns with "Calls" column
-	// Find where "Calls" appears in each section
-	const section1Calls = headerLine.indexOf("Calls", modelW);
-	const section2Calls = headerLine.indexOf("Calls", section1Calls + 10);
-	const section3Calls = headerLine.indexOf("Calls", section2Calls + 10);
-
+	// Build range label line, aligning each label with its "Calls" column
 	let rangeLine = " ".repeat(modelW);
-	rangeLine = rangeLine.padEnd(section1Calls) + "Last Hour";
-	rangeLine = rangeLine.padEnd(section2Calls) + "Last 24h";
-	rangeLine = rangeLine.padEnd(section3Calls) + "Last Week";
+	let searchFrom = modelW;
+	for (const range of ranges) {
+		const pos = headerLine.indexOf("Calls", searchFrom);
+		rangeLine = rangeLine.padEnd(pos) + range.label;
+		searchFrom = pos + 10;
+	}
 	rangeLine = rangeLine.padEnd(headerLine.length);
 	lines.push(rangeLine);
 
@@ -157,6 +179,8 @@ export function formatReportHorizontal(ranges: TimeRangeStats[], theme: any): st
 		for (const range of ranges) {
 			const stat = range.stats.find((s) => `${s.provider}/${s.model}` === key);
 			row += " " + String(stat?.calls ?? "—").padEnd(colW);
+			row += " " + String(stat?.aborts ?? "—").padEnd(colW);
+			row += " " + formatTokK(stat?.inputTokP50 ?? null).padEnd(colW);
 			row += "  " + formatMs(stat?.ttftP50 ?? null).padEnd(colW);
 			row += " " + formatTokS(stat?.tokPerSec ?? null).padEnd(colW);
 			if (range !== ranges[ranges.length - 1]) {
@@ -166,22 +190,6 @@ export function formatReportHorizontal(ranges: TimeRangeStats[], theme: any): st
 		lines.push(row);
 	}
 
-	// Separator
-	lines.push("─".repeat(headerLine.length));
-
-	// Totals - one per section
-	let totalLine = "Total".padEnd(modelW);
-	for (let i = 0; i < ranges.length; i++) {
-		const range = ranges[i];
-		const totalCalls = range.stats.reduce((sum, s) => sum + s.calls, 0);
-		totalLine += " " + String(totalCalls).padEnd(colW);
-		totalLine += "  " + "".padEnd(colW);
-		totalLine += " " + "".padEnd(colW);
-		if (i < ranges.length - 1) {
-			totalLine += groupSep;
-		}
-	}
-	lines.push(totalLine);
 
 	// Apply colors
 	let result = "";
@@ -191,8 +199,6 @@ export function formatReportHorizontal(ranges: TimeRangeStats[], theme: any): st
 		const isRangeHeader = i === 1;
 		const isSeparator = line.includes("────");
 		const isColumnHeader = i === 3;
-		const isTotals = line.startsWith("Total");
-
 		if (isTitle) {
 			result += theme.fg("accent", line);
 		} else if (isRangeHeader) {
@@ -207,31 +213,4 @@ export function formatReportHorizontal(ranges: TimeRangeStats[], theme: any): st
 	}
 
 	return result;
-}
-
-export function formatReport(stats: ModelStats[], timeLabel: string, theme: any): string {
-	if (stats.length === 0) return theme.fg("dim", `No LLM calls recorded (${timeLabel})`);
-
-	const hdr = ` ${"Model".padEnd(26)} ${"Calls".padStart(5)}  ${"TTFT p50".padStart(7)}  ${"Dur p50".padStart(7)}  ${"Tok/s".padStart(6)}  ${"Cost".padStart(8)}`;
-	const sep = "─".repeat(hdr.length);
-
-	let text = theme.fg("accent", `LLM Perf (${timeLabel})`) + "\n";
-	text += theme.fg("dim", sep) + "\n";
-	text += theme.fg("dim", hdr) + "\n";
-	text += theme.fg("dim", sep) + "\n";
-
-	let totalCost = 0;
-	let totalCalls = 0;
-	for (const s of stats) {
-		const line =
-			` ${truncModel(s.provider, s.model, 26)} ${String(s.calls).padStart(5)}  ${formatMs(s.ttftP50)}  ${formatMs(s.durationP50)}  ${formatTokS(s.tokPerSec)}  ${formatCost(s.totalCost)}`;
-		text += line + "\n";
-		totalCost += s.totalCost;
-		totalCalls += s.calls;
-	}
-
-	text += theme.fg("dim", sep) + "\n";
-	text += theme.bold(` ${"Total".padEnd(26)} ${String(totalCalls).padStart(5)}  ${"".padStart(7)}  ${"".padStart(7)}  ${"".padStart(6)}  ${formatCost(totalCost)}`);
-
-	return text;
 }
