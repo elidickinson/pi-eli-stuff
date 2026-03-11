@@ -2,16 +2,18 @@
 
 Personal collection of extensions and skills for [pi](https://github.com/ferologics/pi), an AI coding agent.
 
-> **Working note:** Use relative paths for file operations (e.g., `sandbox/index.ts`, `CLAUDE.md`). Avoid absolute paths like `/Users/esd/projects/pi-my-stuff/...`.
+> **Working note:** Use relative paths for file operations (e.g., `sandbox/index.ts`, `CLAUDE.md`). Avoid absolute paths like `~/projects/pi-my-stuff/...`.
 
 ## Structure
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (grep, find, ls, ask-pi, ask-claude)
-├── skills/          # pi skills (multi-review)
+├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, activity, slash-clear)
+├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-my-browser/   # Browser automation extension
+├── pi-subagents/    # Subagent orchestration library
+├── pi-plan/         # Planning agent
 ├── docs/            # Additional documentation
 └── vendor/          # vendored pi resources (pi-mono, pi-skills, gondolin)
 ```
@@ -32,14 +34,6 @@ Find files by glob pattern.
 ```typescript
 find({ pattern: "**/*.test.ts" })
 find({ pattern: "src/**/*.json" })
-```
-
-### ls
-List directory contents.
-
-```typescript
-ls({ path: "src" })
-ls({ path: ".", depth: 2 })
 ```
 
 ### ask-pi
@@ -68,6 +62,25 @@ Multi-model code review using Claude, DeepSeek, and Kimi in parallel.
 
 **Invoke with:** `/skill:multi-review`
 
+### br
+Browser automation skill.
+
+**Invoke with:** `/skill:br`
+
+### deep-research
+Parallel web agent research using multiple search queries.
+
+**Invoke with:** `/skill:deep-research`
+
+## Docs
+
+- `extension-cookbook.md` — Practical patterns for building extensions (tools, TUI, events, subprocesses)
+- `skill-authoring.md` — How to write SKILL.md files
+- `host-bash-tool.md` — Sandbox host escape hatch (`host_bash` tool) usage and approval flow
+- `pi-gondolin-landscape.md` — Research into pi-gondolin integrations
+- `pi-subagents-dev-notes.md` — Development notes for pi-subagents (tool registration gotchas)
+- `pi-tool-call-ux.md` — How to customize tool call display in the pi TUI
+
 ## Sandbox
 
 Runs pi tools inside [Gondolin](https://github.com/earendil-works/gondolin) micro-VMs on macOS.
@@ -76,7 +89,7 @@ Runs pi tools inside [Gondolin](https://github.com/earendil-works/gondolin) micr
 
 - Session start: Spawns VM with host directory mounted at `/workspace`
 - All pi tools (read, write, edit, bash) run inside the VM
-- Paths are translated between host and guest (e.g., `/Users/esd/project/src/foo.ts` → `/workspace/src/foo.ts`)
+- Paths are translated between host and guest (e.g., `~/project/src/foo.ts` → `/workspace/src/foo.ts`)
 - `host_bash` tool provides escape hatch for commands that must run on the host (requires approval)
 
 ### Usage
@@ -143,20 +156,32 @@ Explanation of how it works...
 ```json
 {
   "extensions": [
-    "/Users/esd/projects/pi-my-stuff/extensions/grep.ts",
-    "/Users/esd/projects/pi-my-stuff/extensions/find.ts",
-    "/Users/esd/projects/pi-my-stuff/extensions/ask-pi.ts",
-    "/Users/esd/projects/pi-my-stuff/extensions/ask-claude.ts"
+    "~/projects/pi-my-stuff/extensions/grep.ts",
+    "~/projects/pi-my-stuff/extensions/find.ts",
+    "~/projects/pi-my-stuff/extensions/ask-pi.ts",
+    "~/projects/pi-my-stuff/extensions/ask-claude.ts",
+    "~/projects/pi-my-stuff/extensions/activity.ts"
   ],
   "workspaces": {
-    "/Users/esd/projects/my-project": {
+    "~/projects/my-project": {
       "extensions": [
-        "/Users/esd/projects/pi-my-stuff/sandbox/index.ts"
+        "~/projects/pi-my-stuff/sandbox/index.ts"
       ]
     }
   }
 }
 ```
+
+### Activity Extension
+
+Track what you're working on with a custom status displayed in the footer.
+
+```bash
+/status "Refactoring auth module"  # Set status
+/status clear                      # Clear status
+```
+
+Status persists across session forks and resumes - the status text is stored in the session and restored when you fork or resume.
 
 ## Reference
 
