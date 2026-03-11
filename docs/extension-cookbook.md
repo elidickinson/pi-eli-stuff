@@ -143,7 +143,37 @@ renderResult(result, { expanded }, theme) {
 },
 ```
 
-Common theme colors: `"toolTitle"`, `"accent"`, `"success"`, `"error"`, `"warning"`, `"muted"`, `"dim"`. Plus `theme.bold(text)` and `theme.italic(text)`.
+### Theme Colors
+
+`theme.fg(color, text)` applies foreground color. `theme.bg(color, text)` applies background. Plus `theme.bold(text)`, `theme.italic(text)`, `theme.underline(text)`, `theme.inverse(text)`, `theme.strikethrough(text)`.
+
+Source: `vendor/pi-mono/packages/coding-agent/src/modes/interactive/theme/theme.ts`
+
+**Foreground colors (`ThemeColor`)** — default dark theme values:
+
+| Color | Default | Use |
+|-------|---------|-----|
+| `accent` | teal `#8abeb7` | Primary accent, selections, bullets |
+| `success` | green `#b5bd68` | Success indicators (✓) |
+| `error` | red `#cc6666` | Error indicators (✗) |
+| `warning` | yellow `#ffff00` | In-progress, caution |
+| `muted` | gray `#808080` | Secondary text, descriptions |
+| `dim` | dark gray `#666666` | Tertiary text, metadata |
+| `text` | (default fg) | Normal text |
+| `toolTitle` | (default fg) | Tool name in call headers |
+| `toolOutput` | gray `#808080` | Tool output text |
+| `border` | blue `#5f87ff` | Borders |
+| `borderAccent` | cyan `#00d7ff` | Accent borders |
+| `borderMuted` | dark gray `#505050` | Subtle borders |
+| `toolDiffAdded` | green | Diff added lines |
+| `toolDiffRemoved` | red | Diff removed lines |
+| `toolDiffContext` | gray | Diff context lines |
+
+Other valid colors: `thinkingText`, `userMessageText`, `customMessageText`, `customMessageLabel`, `mdHeading`, `mdLink`, `mdLinkUrl`, `mdCode`, `mdCodeBlock`, `mdCodeBlockBorder`, `mdQuote`, `mdQuoteBorder`, `mdHr`, `mdListBullet`, `syntaxComment`, `syntaxKeyword`, `syntaxFunction`, `syntaxVariable`, `syntaxString`, `syntaxNumber`, `syntaxType`, `syntaxOperator`, `syntaxPunctuation`, `thinkingOff`, `thinkingMinimal`, `thinkingLow`, `thinkingMedium`, `thinkingHigh`, `thinkingXhigh`, `bashMode`.
+
+**Background colors (`ThemeBg`):** `selectedBg`, `userMessageBg`, `customMessageBg`, `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`.
+
+Themes are JSON files in `vendor/pi-mono/packages/coding-agent/src/modes/interactive/theme/`. Colors reference vars or hex values directly.
 
 ## Streaming Progress
 
@@ -164,7 +194,7 @@ renderResult(result, { expanded, isPartial }, theme) {
 
 ## Commands
 
-Register slash commands with `pi.registerCommand`. `args` is the raw string after the command name. From [`extensions/activity.ts`](../extensions/activity.ts):
+Register slash commands with `pi.registerCommand`. `args` is the raw string after the command name. From [`extensions/statusnote.ts`](../extensions/statusnote.ts):
 
 ```typescript
 pi.registerCommand("status", {
@@ -186,10 +216,10 @@ Command handlers receive `ExtensionCommandContext` which extends `ExtensionConte
 
 ## Session State Persistence
 
-Use `pi.appendEntry()` to persist state and `ctx.sessionManager.getBranch()` to restore it. State survives forks, resumes, and restarts. From [`extensions/activity.ts`](../extensions/activity.ts):
+Use `pi.appendEntry()` to persist state and `ctx.sessionManager.getBranch()` to restore it. State survives forks, resumes, and restarts. From [`extensions/statusnote.ts`](../extensions/statusnote.ts):
 
 ```typescript
-const CUSTOM_TYPE = "activity-status";
+const CUSTOM_TYPE = "statusnote";
 
 // Persist
 pi.appendEntry(CUSTOM_TYPE, { text: "working on auth" });
@@ -199,7 +229,7 @@ function restoreStatus(ctx: ExtensionContext) {
   currentStatus = "";
   for (const entry of ctx.sessionManager.getBranch()) {
     if (entry.type === "custom" && entry.customType === CUSTOM_TYPE) {
-      const data = entry.data as ActivityEntry | undefined;
+      const data = entry.data as StatusNote | undefined;
       currentStatus = data?.text ?? "";
     }
   }
@@ -215,7 +245,7 @@ Entries from `appendEntry` are NOT sent to the LLM -- they're for extension stat
 
 ## Events
 
-Subscribe to lifecycle events with `pi.on()`. From [`extensions/activity.ts`](../extensions/activity.ts) and [`sandbox/index.ts`](../sandbox/index.ts):
+Subscribe to lifecycle events with `pi.on()`. From [`extensions/statusnote.ts`](../extensions/statusnote.ts) and [`sandbox/index.ts`](../sandbox/index.ts):
 
 ```typescript
 // Session lifecycle

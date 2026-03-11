@@ -8,7 +8,7 @@ Personal collection of extensions and skills for [pi](https://github.com/ferolog
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, activity, llm-perf, slash-clear)
+├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, statusnote, llm-perf, slash-clear)
 ├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-my-browser/   # Browser automation extension
@@ -160,7 +160,7 @@ Explanation of how it works...
     "~/projects/pi-my-stuff/extensions/find.ts",
     "~/projects/pi-my-stuff/extensions/ask-pi.ts",
     "~/projects/pi-my-stuff/extensions/ask-claude.ts",
-    "~/projects/pi-my-stuff/extensions/activity.ts"
+    "~/projects/pi-my-stuff/extensions/statusnote.ts"
   ],
   "workspaces": {
     "~/projects/my-project": {
@@ -172,7 +172,7 @@ Explanation of how it works...
 }
 ```
 
-### Activity Extension
+### StatusNote Extension
 
 Track what you're working on with a custom status displayed in the footer.
 

@@ -60,7 +60,11 @@ cd sandbox && ./build.sh
 | `grep.ts` | File content search via ripgrep |
 | `find.ts` | Find files by glob pattern |
 | `ask-pi.ts` | Run pi as read-only subprocess |
-| `ask-claude.ts` | Run Claude Code as subprocess |
+| `ask-claude.ts` | *(deprecated, use claude-acp)* Run Claude Code as subprocess |
+| `claude-acp.ts` | Claude Code via ACP with persistent sessions |
+| `fetch.ts` | Fetch URLs as markdown, with optional proxy and JS rendering |
+| `llm-perf/` | Passive LLM metrics tracking (TTFT, latency, throughput, cost) |
+| `statusnote.ts` | `/status` command — persistent footer note |
 | `slash-clear.ts` | `/clear` command (alias for `/new`) |
 
 ## Skills
