@@ -94,6 +94,8 @@ Register abort listener with `{ once: true }`, clean up in `close`, reject with 
 
 ## TUI Rendering
 
+Basics here; for the full rendering API (details metadata, keybindings, streaming nuances) see [pi-tool-call-ux.md](pi-tool-call-ux.md).
+
 ### renderCall
 
 Shows tool invocation before/during execution. From [`extensions/ask-pi.ts`](../extensions/ask-pi.ts):
@@ -280,6 +282,19 @@ async execute(_id, params, signal, _onUpdate, ctx) {
   // proceed...
 },
 ```
+
+### ctx.ui methods
+
+| Method | Behavior |
+|--------|----------|
+| `ctx.ui.notify(msg, level)` | Persistent banner in the TUI. Not part of conversation context — the LLM won't see it in future turns. Levels: `"info"`, `"warning"`, `"error"`. |
+| `ctx.ui.confirm(title, body)` | Blocking dialog, returns `boolean`. |
+| `ctx.ui.select(title, items)` | Blocking selection dialog. |
+| `ctx.ui.input(title, placeholder?)` | Blocking text input. |
+| `ctx.ui.setStatus(key, text)` | Footer status line. Pass `undefined` to clear. |
+| `ctx.ui.setWidget(key, lines)` | Widget above/below editor. |
+
+To put information into the conversation context (visible to the LLM in future turns), use `pi.sendMessage()` with `{ triggerTurn: false }`. See the [official docs](../vendor/pi-mono/packages/coding-agent/docs/extensions.md) for full UI reference.
 
 ## Gotchas
 
