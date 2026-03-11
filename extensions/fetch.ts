@@ -9,10 +9,25 @@ import * as fs from "fs";
 const execAsync = promisify(exec);
 const TMP_DIR = "/tmp";
 
+interface FetchConfig {
+	proxyUser?: string;
+	proxyPass?: string;
+}
+
+function getConfig(): FetchConfig {
+	const configPath = path.join(os.homedir(), ".pi", "agent", "fetch.json");
+	try {
+		const content = fs.readFileSync(configPath, "utf-8");
+		return JSON.parse(content);
+	} catch {
+		return {};
+	}
+}
+
 // Binary file extensions to handle specially
 const BINARY_EXTENSIONS = new Set([
 	"pdf", "zip", "tar", "gz", "bz2", "rar", "7z",
-	"jpg", "jpeg", "png", "gif", "webp", "svg", "ico",
+	"jpg", "jpeg", "png", "gif", "webp", "ico",
 	"mp4", "mp3", "wav", "avi", "mov", "wmv",
 	"exe", "dmg", "deb", "rpm", "apk", "msi",
 	"doc", "docx", "xls", "xlsx", "ppt", "pptx",
@@ -48,12 +63,12 @@ function getOutputPath(url: string): string {
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "fetch",
-		description: "Fetch a URL and return content. For HTML, returns markdown. For binary files, saves to /tmp and returns path.",
+		description: "Fetch a URL and return readable content as markdown. Best-effort for binary files (saves to /tmp).",
 		parameters: Type.Object({
 			url: Type.String({ description: "URL to fetch" }),
 			proxy: Type.Optional(
 				Type.Boolean({
-					description: "Use proxy to bypass restrictions (requires UNBLOCKER_USER and UNBLOCKER_PASS env vars)",
+					description: "Use proxy to bypass restrictions (requires IPROYAL_UNBLOCKER_USER/IPROYAL_UNBLOCKER_PASS env vars or ~/.pi/agent/fetch.json config)",
 				})
 			),
 			js_render: Type.Optional(
@@ -61,28 +76,35 @@ export default function (pi: ExtensionAPI) {
 					description: "Render JavaScript before fetching (requires proxy=true, appends _render-1 to proxy password)",
 				})
 			),
+			return_markdown: Type.Optional(
+				Type.Boolean({
+					description: "Convert HTML to markdown (default: true). If false, returns raw HTML.",
+				})
+			),
 			max_length: Type.Optional(
 				Type.Number({
-					description: "Maximum characters to return (default: 100000, set to -1 for no limit)",
+					description: "Maximum characters to return (default: 40000, set to -1 for no limit)",
 				})
 			),
 		}),
 		async execute(id, params, signal, onUpdate, ctx) {
-			const { url, proxy, js_render, max_length = 100000 } = params;
+			const { url, proxy, js_render, return_markdown = true, max_length = 40000 } = params;
+			const config = getConfig();
 
 			// Auto-enable proxy if js_render is requested
 			const useProxy = js_render || proxy;
 
 			// Validate proxy settings
+			const proxyUser = config.proxyUser || process.env.IPROYAL_UNBLOCKER_USER;
+			const proxyPass = config.proxyPass || process.env.IPROYAL_UNBLOCKER_PASS;
+
 			if (useProxy) {
-				const user = process.env.UNBLOCKER_USER;
-				const pass = process.env.UNBLOCKER_PASS;
-				if (!user || !pass) {
+				if (!proxyUser || !proxyPass) {
 					return {
 						content: [
 							{
 								type: "text",
-								text: "Error: proxy requires UNBLOCKER_USER and UNBLOCKER_PASS environment variables",
+								text: "Error: proxy requires IPROYAL_UNBLOCKER_USER/IPROYAL_UNBLOCKER_PASS env vars or ~/.pi/agent/fetch.json config with proxyUser/proxyPass",
 							},
 						],
 						details: {},
@@ -98,7 +120,7 @@ export default function (pi: ExtensionAPI) {
 			try {
 				// Build curl command
 				const curlCmd = useProxy
-					? buildProxyCurlCommand(url, js_render)
+					? buildProxyCurlCommand(proxyUser!, proxyPass!, js_render)
 					: `curl_chrome145 -sL`;
 
 				// Fetch to temp file
@@ -124,16 +146,22 @@ export default function (pi: ExtensionAPI) {
 					};
 				}
 
-				// Text content - convert to markdown
-				const { stdout } = await execAsync(`html2markdown ${quote(tempFile)}`, {
-					signal,
-					maxBuffer: 10 * 1024 * 1024,
-				});
+				// Text content
+				let content: string;
+				if (return_markdown) {
+					// Convert to markdown
+					const { stdout } = await execAsync(`html2markdown ${quote(tempFile)}`, {
+						signal,
+						maxBuffer: 10 * 1024 * 1024,
+					});
+					content = stdout;
+				} else {
+					// Return raw HTML
+					content = fs.readFileSync(tempFile, "utf-8");
+				}
 
-				let content = stdout;
-
-				// Truncate if needed (-1 or undefined means no limit)
-				if (max_length !== -1 && max_length !== undefined && content.length > max_length) {
+				// Truncate if needed (-1 means no limit)
+				if (max_length !== -1 && content.length > max_length) {
 					content = content.slice(0, max_length);
 					content += `\n\n... (truncated at ${max_length} characters)`;
 				}
@@ -170,28 +198,29 @@ async function checkIsBinary(filePath: string): Promise<boolean> {
 	try {
 		const buffer = Buffer.alloc(512);
 		const fd = fs.openSync(filePath, "r");
-		fs.readSync(fd, buffer, 0, 512, 0);
+		const bytesRead = fs.readSync(fd, buffer, 0, 512, 0);
 		fs.closeSync(fd);
 
 		// Check for null bytes or high byte ratio
 		let nullBytes = 0;
 		let highBytes = 0;
-		for (let i = 0; i < buffer.length; i++) {
+		for (let i = 0; i < bytesRead; i++) {
 			if (buffer[i] === 0) nullBytes++;
 			if (buffer[i] > 127) highBytes++;
 		}
 
 		// If more than 1% null bytes or 30% high bytes, likely binary
-		return nullBytes > 5 || highBytes > buffer.length * 0.3;
+		return nullBytes > 5 || highBytes > bytesRead * 0.3;
 	} catch {
 		return false;
 	}
 }
 
-function buildProxyCurlCommand(url: string, jsRender: boolean | undefined): string {
-	const user = process.env.UNBLOCKER_USER!;
-	let pass = process.env.UNBLOCKER_PASS!;
-
+function buildProxyCurlCommand(
+	user: string,
+	pass: string,
+	jsRender: boolean | undefined
+): string {
 	if (jsRender) {
 		pass = pass + "_render-1";
 	}
