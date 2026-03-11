@@ -5,6 +5,7 @@ import { Type } from "@sinclair/typebox";
 
 interface AskPiDetails {
   model?: string;
+  tools: string;
   promptLength: number;
   executionTime: number;
   exitCode?: number;
@@ -101,18 +102,24 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "AskPi",
     label: "Ask Pi",
-    description: "Send a prompt to pi and return the response. Only makes sense to call as a background agent and/or with a different model. Read-only: no edit/write/bash tools.",
+    description: "Send a prompt to pi and return the response. Only makes sense to call as a background agent and/or with a different model. Access level: 'none' (no tools), 'read' (read-only tools: grep/find/ls), 'all' (full access). Defaults to 'read'.",
     parameters: Type.Object({
       prompt: Type.String({ description: "The prompt to send" }),
       model: Type.Optional(Type.String({
         description: "Model ID (format: provider/model, e.g. minimax/MiniMax-M2.5-highspeed, openrouter/qwen/qwen3.5-397b-a17b, deepseek/deepseek-reasoner). Use ListPiModels to see available options.",
       })),
+      tools: Type.Optional(Type.Union([
+        Type.Literal("none"),
+        Type.Literal("read"),
+        Type.Literal("all"),
+      ])),
     }),
     renderCall(args, theme) {
       let text = theme.fg("toolTitle", theme.bold("AskPi "));
       const preview = args.prompt.length > 200 ? args.prompt.substring(0, 200) + "..." : args.prompt;
       text += theme.fg("muted", `"${preview}"`);
       if (args.model) text += ` ${theme.fg("accent", `[${args.model}]`)}`;
+      if (args.tools) text += ` ${theme.fg("dim", `[tools:${args.tools}]`)}`;
       return new Text(text, 0, 0);
     },
     renderResult(result, { expanded }, theme) {
@@ -136,6 +143,7 @@ export default function (pi: ExtensionAPI) {
 
       if (details) {
         text += `\n${theme.fg("dim", `Model: ${details.model || "default"}`)}`;
+        text += `\n${theme.fg("dim", `Tools: ${details.tools}`)}`;
         text += `\n${theme.fg("dim", `Prompt: ${details.promptLength} chars`)}`;
         text += `\n${theme.fg("dim", `Time: ${(details.executionTime / 1000).toFixed(2)}s`)}`;
       }
@@ -147,40 +155,31 @@ export default function (pi: ExtensionAPI) {
     },
     async execute(id, params, signal) {
       const startTime = Date.now();
-      const args = ["-p", "--tools", "read", "-ne", params.prompt];
+      const toolsParam = params.tools || "read";
+
+      const toolConfig: Record<string, string[] | undefined> = {
+        none: ["--no-tools"],
+        read: ["--tools", "read,grep,find,ls"],
+        all: undefined,
+      };
+
+      const toolFlags = toolConfig[toolsParam];
+      const args = ["-p", "-ne", params.prompt];
+      if (toolFlags) args.push(...toolFlags);
       if (params.model) args.push("--model", params.model);
 
-      return new Promise((resolve, reject) => {
-        const proc = spawn("pi", args, {
-          cwd: process.cwd(),
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+      const { stdout, stderr, code } = await spawnPi(args, signal);
+      const text = stdout.trim() || stderr.trim() || `(exit ${code})`;
 
-        let stdout = "";
-        let stderr = "";
-        proc.stdout.on("data", (chunk) => { stdout += chunk; });
-        proc.stderr.on("data", (chunk) => { stderr += chunk; });
+      const details: AskPiDetails = {
+        model: params.model,
+        tools: toolsParam,
+        promptLength: params.prompt.length,
+        executionTime: Date.now() - startTime,
+        exitCode: code ?? undefined,
+      };
 
-        const onAbort = () => proc.kill();
-        signal?.addEventListener("abort", onAbort, { once: true });
-
-        proc.on("close", (code) => {
-          signal?.removeEventListener("abort", onAbort);
-          if (signal?.aborted) return reject(new Error("aborted"));
-          const text = stdout.trim() || stderr.trim() || `(exit ${code})`;
-
-          const details: AskPiDetails = {
-            model: params.model,
-            promptLength: params.prompt.length,
-            executionTime: Date.now() - startTime,
-            exitCode: code ?? undefined,
-          };
-
-          resolve({ content: [{ type: "text", text }], details });
-        });
-
-        proc.on("error", reject);
-      });
+      return { content: [{ type: "text", text }], details };
     },
   });
 }
