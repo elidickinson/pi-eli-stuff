@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import { exec } from "child_process";
 import { promisify } from "util";
 import * as path from "path";
@@ -68,7 +68,7 @@ export default function (pi: ExtensionAPI) {
 			url: Type.String({ description: "URL to fetch" }),
 			proxy: Type.Optional(
 				Type.Boolean({
-					description: "Use proxy to bypass restrictions (requires IPROYAL_UNBLOCKER_USER/IPROYAL_UNBLOCKER_PASS env vars or ~/.pi/agent/fetch.json config)",
+					description: "Use proxy to bypass rate limits or geo/bot restrictions.",
 				})
 			),
 			js_render: Type.Optional(
@@ -150,7 +150,7 @@ export default function (pi: ExtensionAPI) {
 				let content: string;
 				if (return_markdown) {
 					// Convert to markdown
-					const { stdout } = await execAsync(`html2markdown ${quote(tempFile)}`, {
+					const { stdout } = await execAsync(`cat ${quote(tempFile)} | html2markdown`, {
 						signal,
 						maxBuffer: 10 * 1024 * 1024,
 					});
