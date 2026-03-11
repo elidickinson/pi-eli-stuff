@@ -35,6 +35,8 @@ import { RealFSProvider, VM, type VMOptions } from "@earendil-works/gondolin";
 const GUEST_WORKSPACE = "/workspace";
 const GUEST_CONFIG = "/config";
 const HOST_CONFIG = path.join(os.homedir(), ".config", "pi-sandbox");
+/** Last 2 path segments: /Users/esd/projects/foo -> projects/foo */
+const shortPath = (p: string) => p.split(path.sep).slice(-2).join("/");
 
 function readCachedFile(name: string): string | null {
   try {
@@ -302,7 +304,7 @@ export default function (pi: ExtensionAPI) {
         "gondolin",
         ctx.ui.theme.fg(
           "accent",
-          `Gondolin: running (${localCwd} -> ${GUEST_WORKSPACE})`,
+          `Sandbox (${shortPath(localCwd)} -> ${GUEST_WORKSPACE})`,
         ),
       );
       ctx?.ui.notify(
