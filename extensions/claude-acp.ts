@@ -79,6 +79,21 @@ function ensureSession(name: string): Promise<void> {
   });
 }
 
+// --- Exit code handling ---
+
+const ACPX_EXIT_REASONS: Record<number, string> = {
+  1: "Runtime error",
+  2: "Invalid usage",
+  3: "Timeout",
+  4: "Session not found",
+  5: "Permission denied — Claude tried to perform an action not allowed by the current permission level",
+  130: "Interrupted",
+};
+
+function exitReason(exitCode: number): string {
+  return ACPX_EXIT_REASONS[exitCode] || `exit ${exitCode}`;
+}
+
 // --- Render helpers ---
 
 type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>>[2];
@@ -86,7 +101,7 @@ type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0][
 function statusText(theme: Theme, exitCode: number | undefined, label: string, responseText?: string): string {
   const isError = exitCode != null && exitCode !== 0;
   if (!isError) return theme.fg("success", `✓ ${label}`);
-  let text = theme.fg("error", `✗ ${label} (exit ${exitCode})`);
+  let text = theme.fg("error", `✗ ${label}: ${exitReason(exitCode)} (exit ${exitCode})`);
   if (responseText) {
     text += ` ${theme.fg("muted", firstLinePreview(responseText, 120))}`;
   }
@@ -155,9 +170,9 @@ export default function (pi: ExtensionAPI) {
     label: "Claude ACP",
     description: "Send a prompt to Claude Code via ACP. Sessions persist conversation history for follow-ups.",
     promptGuidelines: [
+      "IMPORTANT: If the prompt asks Claude to write, edit, or run commands, you MUST set permissions to 'approve-all'. The default 'approve-reads' only allows reading files and will cause the call to fail with permission denied.",
       "Use session_name for multi-turn conversations; use oneShot for independent questions",
       "Pick descriptive session names (e.g. 'refactor-auth', not 'session1')",
-      "Default permissions are approve-reads; use approve-all only when Claude needs to write files",
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "The prompt to send" }),
@@ -171,7 +186,7 @@ export default function (pi: ExtensionAPI) {
             Type.Literal("approve-reads"),
             Type.Literal("deny-all"),
           ],
-          { description: "Permission level (default: approve-reads)" },
+          { description: "Permission level (default: approve-reads). Use approve-all if the prompt requires writing/editing files or running commands." },
         ),
       ),
       oneShot: Type.Optional(
@@ -268,6 +283,11 @@ export default function (pi: ExtensionAPI) {
           });
         },
       });
+
+      if (result.exitCode != null && result.exitCode !== 0) {
+        const reason = exitReason(result.exitCode);
+        throw new Error(`ClaudeAcp failed: ${reason}. Output: ${result.text.substring(0, 500)}`);
+      }
 
       const details: ClaudeAcpDetails = {
         session_name: sessionName,
