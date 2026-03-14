@@ -65,9 +65,10 @@ AskClaude({ prompt: "Analyze this architecture...", model: "sonnet" })
 Interactive Claude Code mode via ACP. Forwards all user messages to Claude Code and streams responses back into pi's TUI with markdown rendering, tool call tracking, and plan display.
 
 ```bash
-/claude:on   # Connect to Claude Code
-/claude:off  # Disconnect
-/pi <msg>    # Send a message to Pi's LLM while connected
+/claude:on    # Connect (resumes previous session)
+/claude:off   # Disconnect (preserves session)
+/claude:clear # Disconnect and start fresh
+/pi <msg>     # Send a message to Pi's LLM while connected
 ```
 
 ### claude-acpx

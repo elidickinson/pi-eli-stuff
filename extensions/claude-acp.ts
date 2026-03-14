@@ -5,8 +5,9 @@
  * and responses stream back into pi's TUI.
  *
  * Commands:
- *   /claude:on  - Connect to Claude Code
- *   /claude:off - Disconnect from Claude Code
+ *   /claude:on    - Connect (resumes previous session)
+ *   /claude:off   - Disconnect (preserves session)
+ *   /claude:clear - Disconnect and forget session
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -83,6 +84,7 @@ export default function (pi: ExtensionAPI) {
 	let active = false;
 	let connection: ClientSideConnection | null = null;
 	let sessionId: string | null = null;
+	let lastSessionId: string | null = null; // for resume after disconnect
 	let agentProcess: ChildProcess | null = null;
 	let prompting = false;
 	let currentMode: string | null = null;
@@ -430,7 +432,7 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Connection lifecycle ---
 
-	async function connect(ctx: ExtensionContext): Promise<void> {
+	async function connect(ctx: ExtensionContext, resumeId?: string | null): Promise<void> {
 		uiCtx = ctx;
 
 		const child = spawn("npx", ["-y", "@zed-industries/claude-agent-acp"], {
@@ -490,19 +492,36 @@ export default function (pi: ExtensionAPI) {
 			clientInfo: { name: "pi-claude-acp-mode", version: "0.1.0" },
 		});
 
-		const session = await connection.newSession({
-			cwd: process.cwd(),
-			mcpServers: [],
-		});
-		sessionId = session.sessionId;
+		let resumed = false;
+		if (resumeId) {
+			try {
+				await connection.loadSession({ sessionId: resumeId, cwd: process.cwd() });
+				sessionId = resumeId;
+				resumed = true;
+			} catch {
+				// Session no longer exists — fall through to new session
+			}
+		}
+		if (!resumed) {
+			const session = await connection.newSession({
+				cwd: process.cwd(),
+				mcpServers: [],
+			});
+			sessionId = session.sessionId;
+		}
+
+		// Set bypassPermissions so Claude Code's built-in tools (Bash, WebSearch, etc.) work
+		await connection.setSessionMode({ sessionId, modeId: "bypassPermissions" });
 
 		active = true;
+		lastSessionId = sessionId;
 		updateFooter();
 
+		const label = resumed ? "Resumed" : "Connected to";
 		pi.sendMessage(
 			{
 				customType: MSG_STATUS,
-				content: `Connected to Claude Code (${initResult.agentInfo?.name ?? "agent"})`,
+				content: `${label} Claude Code (${initResult.agentInfo?.name ?? "agent"})`,
 				display: true,
 				details: {},
 			},
@@ -512,6 +531,7 @@ export default function (pi: ExtensionAPI) {
 
 	function disconnect() {
 		active = false;
+		lastSessionId = sessionId;
 		if (agentProcess) {
 			agentProcess.kill();
 			agentProcess = null;
@@ -649,7 +669,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const box = new Box(0, 0);
-		box.addChild(new Text(theme.fg("success", "● Claude"), 0, 0));
+		box.addChild(new Text(theme.fg("mdLink", "[claude]"), 0, 0));
 		box.addChild(new Markdown(content, 0, 0, mdTheme, {
 			color: (t) => theme.fg("mdLink", t),
 		}));
@@ -742,7 +762,7 @@ export default function (pi: ExtensionAPI) {
 	// --- /claude:on and /claude:off Commands ---
 
 	pi.registerCommand("claude:on", {
-		description: "Connect to Claude Code — forward messages via ACP",
+		description: "Connect to Claude Code — resumes previous session if available",
 		async handler(_args, ctx) {
 			uiCtx = ctx;
 			if (active) {
@@ -751,9 +771,9 @@ export default function (pi: ExtensionAPI) {
 			}
 			ctx.ui.notify("Connecting to Claude Code...", "info");
 			try {
-				await connect(ctx);
+				await connect(ctx, lastSessionId);
 				ctx.ui.notify("Claude Code connected", "info");
-				pi.appendEntry(ENTRY_TYPE, { active: true });
+				pi.appendEntry(ENTRY_TYPE, { active: true, sessionId: lastSessionId });
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				ctx.ui.notify(`Failed to connect: ${msg}`, "error");
@@ -762,7 +782,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("claude:off", {
-		description: "Disconnect from Claude Code",
+		description: "Disconnect from Claude Code (session is preserved for resume)",
 		async handler(_args, ctx) {
 			uiCtx = ctx;
 			if (!active) {
@@ -771,7 +791,18 @@ export default function (pi: ExtensionAPI) {
 			}
 			disconnect();
 			ctx.ui.notify("Claude Code disconnected", "info");
-			pi.appendEntry(ENTRY_TYPE, { active: false });
+			pi.appendEntry(ENTRY_TYPE, { active: false, sessionId: lastSessionId });
+		},
+	});
+
+	pi.registerCommand("claude:clear", {
+		description: "Disconnect and start a fresh Claude Code session next time",
+		async handler(_args, ctx) {
+			uiCtx = ctx;
+			if (active) disconnect();
+			lastSessionId = null;
+			ctx.ui.notify("Claude Code session cleared", "info");
+			pi.appendEntry(ENTRY_TYPE, { active: false, sessionId: null });
 		},
 	});
 
@@ -779,12 +810,12 @@ export default function (pi: ExtensionAPI) {
 
 	function restoreState(ctx: ExtensionContext) {
 		uiCtx = ctx;
-		// Don't auto-reconnect, just restore footer state
+		// Don't auto-reconnect, just restore footer and session state
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === ENTRY_TYPE) {
-				const data = entry.data as { active?: boolean } | undefined;
+				const data = entry.data as { active?: boolean; sessionId?: string | null } | undefined;
+				if (data?.sessionId !== undefined) lastSessionId = data.sessionId;
 				if (data?.active && !active) {
-					// Was active before fork/resume — show hint
 					ctx.ui.setStatus(
 						"claude-acp",
 						ctx.ui.theme.fg("dim", "Claude Code ○ (run /claude:on to reconnect)"),
