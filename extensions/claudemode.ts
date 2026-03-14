@@ -39,7 +39,7 @@ import {
 	type ToolCall,
 } from "@agentclientprotocol/sdk";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import { Box, Markdown, type MarkdownTheme, Text } from "@mariozechner/pi-tui";
 
 // --- Types ---
 
@@ -468,6 +468,7 @@ export default function (pi: ExtensionAPI) {
 		resetStreamState();
 		prompting = true;
 		updateFooter();
+		uiCtx?.ui.setWidget(WIDGET_KEY, ["◉ Waiting for Claude Code..."]);
 
 		try {
 			const result = await connection.prompt({
@@ -518,6 +519,24 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerMessageRenderer(MSG_RESPONSE, (message, { expanded }, theme) => {
+		// Build markdown theme from pi's active theme so Claude Code responses render
+		// with proper markdown formatting (headings, code blocks, lists, etc.)
+		const mdTheme: MarkdownTheme = {
+			heading: (t) => theme.bold(theme.fg("mdHeading", t)),
+			link: (t) => theme.fg("mdLink", t),
+			linkUrl: (t) => theme.fg("mdLinkUrl", t),
+			code: (t) => theme.fg("mdCode", t),
+			codeBlock: (t) => theme.fg("mdCodeBlock", t),
+			codeBlockBorder: (t) => theme.fg("mdCodeBlockBorder", t),
+			quote: (t) => theme.fg("mdQuote", t),
+			quoteBorder: (t) => theme.fg("mdQuoteBorder", t),
+			hr: (t) => theme.fg("mdHr", t),
+			listBullet: (t) => theme.fg("mdListBullet", t),
+			bold: (t) => theme.bold(t),
+			italic: (t) => theme.italic(t),
+			underline: (t) => theme.underline(t),
+			strikethrough: (t) => theme.strikethrough(t),
+		};
 		const details = message.details as {
 			thinking?: string;
 			isPlan?: boolean;
@@ -530,23 +549,29 @@ export default function (pi: ExtensionAPI) {
 				: "";
 		const content = raw.replace(/^\[Claude Code] /, "");
 
-		let text = "";
-
 		if (details?.isPlan) {
-			text += theme.fg("accent", "◇ Plan") + "\n";
-			text += content;
-			return new Text(text, 0, 0);
+			const planBox = new Box(0, 0);
+			planBox.addChild(new Text(theme.fg("accent", "◇ Plan"), 0, 0));
+			planBox.addChild(new Markdown(content, 0, 0, mdTheme, {
+				color: (t) => theme.fg("mdLink", t),
+			}));
+			return planBox;
 		}
 
-		text += theme.fg("success", "● Claude") + "\n\n";
-		text += content;
+		const box = new Box(0, 0);
+		box.addChild(new Text(theme.fg("success", "● Claude"), 0, 0));
+		box.addChild(new Markdown(content, 0, 0, mdTheme, {
+			color: (t) => theme.fg("mdLink", t),
+		}));
 
 		if (expanded && details?.thinking) {
-			text += "\n\n" + theme.fg("dim", "─ Thinking " + "─".repeat(29));
-			text += "\n" + theme.fg("dim", details.thinking);
+			box.addChild(new Text(
+				theme.fg("dim", "─ Thinking " + "─".repeat(29)) + "\n" + theme.fg("dim", details.thinking),
+				0, 0,
+			));
 		}
 
-		return new Text(text, 0, 0);
+		return box;
 	});
 
 	pi.registerMessageRenderer(MSG_TOOL, (message, { expanded }, theme) => {
@@ -590,9 +615,23 @@ export default function (pi: ExtensionAPI) {
 		// Allow /commands to pass through to pi
 		if (text.startsWith("/")) return { action: "continue" as const };
 
+		// Let messages from sendUserMessage (e.g. /pi command) go to pi's LLM
+		if (event.source === "extension") return { action: "continue" as const };
+
 		// Forward to Claude Code
 		handlePrompt(text);
 		return { action: "handled" as const };
+	});
+
+	// --- /pi Command (talk to Pi while in claudemode) ---
+
+	pi.registerCommand("pi", {
+		description: "Send a message to Pi's LLM instead of Claude Code (only useful in Claude Mode)",
+		async handler(args) {
+			const text = args?.trim();
+			if (!text) return;
+			pi.sendUserMessage(text);
+		},
 	});
 
 	// --- /claudemode Command ---
