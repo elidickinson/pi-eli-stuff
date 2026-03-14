@@ -18,7 +18,7 @@ Example: `ExtensionContext` has `ctx.model` (a property), NOT `ctx.getModel()` (
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claudemode, fetch, statusnote, llm-perf, slash-clear)
+├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claude-acpx, fetch, statusnote, llm-perf, slash-clear)
 ├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-my-browser/   # Browser automation extension
@@ -62,15 +62,16 @@ AskClaude({ prompt: "Analyze this architecture...", model: "sonnet" })
 ```
 
 ### claude-acp
-Bridge pi to Claude Code via ACP (Agent Communication Protocol). Sends messages to a running Claude Code instance and streams responses back.
-
-### claudemode
-Toggle mode that forwards all pi user messages to Claude Code via ACP, streaming responses back into pi's TUI.
+Interactive Claude Code mode via ACP. Forwards all user messages to Claude Code and streams responses back into pi's TUI with markdown rendering, tool call tracking, and plan display.
 
 ```bash
-/claudemode           # Toggle on/off
-/claudemode disconnect # Explicit disconnect
+/claude:on   # Connect to Claude Code
+/claude:off  # Disconnect
+/pi <msg>    # Send a message to Pi's LLM while connected
 ```
+
+### claude-acpx
+One-shot Claude Code tool via `acpx` CLI. Sends a prompt and returns the result. Supports named sessions for multi-turn conversations.
 
 ### fetch
 Fetch web pages and download files. Supports proxy auth via `~/.pi/agent/fetch.json`.

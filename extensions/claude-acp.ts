@@ -1,301 +1,805 @@
-import { spawn } from "node:child_process";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { keyHint } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+/**
+ * Claude ACP Extension
+ *
+ * Connects pi to Claude Code via ACP. User messages are forwarded to Claude Code
+ * and responses stream back into pi's TUI.
+ *
+ * Commands:
+ *   /claude:on  - Connect to Claude Code
+ *   /claude:off - Disconnect from Claude Code
+ */
 
-interface AcpxResult {
-  text: string;
-  exitCode: number | undefined;
-  executionTime: number;
+import { spawn, type ChildProcess } from "node:child_process";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { Writable, Readable } from "node:stream";
+import {
+	ClientSideConnection,
+	ndJsonStream,
+	PROTOCOL_VERSION,
+	type SessionUpdate,
+	type RequestPermissionRequest,
+	type RequestPermissionResponse,
+	type SessionNotification,
+	type ReadTextFileRequest,
+	type ReadTextFileResponse,
+	type WriteTextFileRequest,
+	type WriteTextFileResponse,
+	type CreateTerminalRequest,
+	type CreateTerminalResponse,
+	type TerminalOutputRequest,
+	type TerminalOutputResponse,
+	type WaitForTerminalExitRequest,
+	type WaitForTerminalExitResponse,
+	type KillTerminalRequest,
+	type KillTerminalResponse,
+	type ReleaseTerminalRequest,
+	type ReleaseTerminalResponse,
+	type ToolCallUpdate,
+	type ToolCall,
+} from "@agentclientprotocol/sdk";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Box, Markdown, type MarkdownTheme, Text } from "@mariozechner/pi-tui";
+
+// --- Types ---
+
+interface ToolCallContentBlock {
+	type: string;
+	text?: string;
+	// Diff content
+	path?: string;
+	oldText?: string;
+	newText?: string;
 }
 
-interface SpawnAcpxOptions {
-  args: string[];
-  prompt: string;
-  signal?: AbortSignal;
-  onStdout?: (accumulated: string) => void;
+interface ToolCallState {
+	name: string;
+	status: string;
+	rawInput?: unknown;
+	rawOutput?: unknown;
+	content?: ToolCallContentBlock[];
+	locations?: Array<{ path?: string; uri?: string }>;
 }
 
-/** Spawn acpx with args, pipe prompt via stdin, collect output. */
-function spawnAcpx(opts: SpawnAcpxOptions): Promise<AcpxResult> {
-  const startTime = Date.now();
-  return new Promise((resolve, reject) => {
-    const proc = spawn("acpx", opts.args, {
-      cwd: process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk;
-      opts.onStdout?.(stdout);
-    });
-    proc.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
-
-    const onAbort = () => proc.kill();
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
-
-    proc.on("close", (code) => {
-      opts.signal?.removeEventListener("abort", onAbort);
-      resolve({
-        text: stdout.trim() || stderr.trim() || (opts.signal?.aborted ? "(aborted)" : `(exit ${code})`),
-        exitCode: opts.signal?.aborted ? 130 : (code ?? undefined),
-        executionTime: Date.now() - startTime,
-      });
-    });
-    proc.on("error", reject);
-
-    proc.stdin.write(opts.prompt);
-    proc.stdin.end();
-  });
+interface TerminalState {
+	proc: ChildProcess;
+	output: string;
+	exitCode?: number | null;
+	signal?: string | null;
 }
 
-/** Ensure a named session exists, with timeout. */
-function ensureSession(name: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      proc.kill();
-      reject(new Error("sessions ensure timed out"));
-    }, 10000);
+// --- Message types for pi TUI ---
 
-    const proc = spawn("acpx", ["claude", "sessions", "ensure", "--name", name], {
-      stdio: ["ignore", "pipe", "pipe"],
-      cwd: process.cwd(),
-    });
-    let stderr = "";
-    proc.stderr?.on("data", (c: Buffer) => (stderr += c));
-    proc.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code === 0) resolve();
-      else reject(new Error(stderr || `sessions ensure failed with code ${code}`));
-    });
-    proc.on("error", (e) => {
-      clearTimeout(timeout);
-      reject(e);
-    });
-  });
-}
-
-// --- Exit code handling ---
-
-const ACPX_EXIT_REASONS: Record<number, string> = {
-  1: "Runtime error",
-  2: "Invalid usage",
-  3: "Timeout",
-  4: "Session not found",
-  5: "Permission denied — Claude tried to perform an action not allowed by the current permission level",
-  130: "Interrupted",
-};
-
-function exitReason(exitCode: number): string {
-  return ACPX_EXIT_REASONS[exitCode] || `exit ${exitCode}`;
-}
-
-// --- Render helpers ---
-
-type Theme = Parameters<NonNullable<Parameters<ExtensionAPI["registerTool"]>[0]["renderResult"]>>[2];
-
-function statusText(theme: Theme, exitCode: number | undefined, label: string, responseText?: string): string {
-  const isError = exitCode != null && exitCode !== 0;
-  if (!isError) return theme.fg("success", `✓ ${label}`);
-  let text = theme.fg("error", `✗ ${label}: ${exitReason(exitCode)} (exit ${exitCode})`);
-  if (responseText) {
-    text += ` ${theme.fg("muted", firstLinePreview(responseText, 120))}`;
-  }
-  return text;
-}
-
-function firstLinePreview(text: string, maxLen = 150): string {
-  const line = text.split("\n")[0] || "";
-  return line.length > maxLen ? line.substring(0, maxLen) + "..." : line;
-}
+const MSG_USER = "claude-acp-user";
+const MSG_RESPONSE = "claude-acp-response";
+const MSG_TOOL = "claude-acp-tool";
+const MSG_STATUS = "claude-acp-status";
+const ENTRY_TYPE = "claude-acp-state";
+const WIDGET_KEY = "claude-acp-stream";
 
 // --- Extension ---
 
-interface ClaudeAcpDetails {
-  session_name?: string;
-  prompt: string;
-  promptLength: number;
-  executionTime: number;
-  exitCode?: number;
-}
-
 export default function (pi: ExtensionAPI) {
-  // /claude slash command — inline one-shot, result stays in context
-  const CLAUDE_MSG_TYPE = "claude-acp-response";
+	let active = false;
+	let connection: ClientSideConnection | null = null;
+	let sessionId: string | null = null;
+	let agentProcess: ChildProcess | null = null;
+	let prompting = false;
+	let currentMode: string | null = null;
 
-  pi.registerMessageRenderer(CLAUDE_MSG_TYPE, (message, { expanded }, theme) => {
-    const details = message.details as { prompt?: string; executionTime: number; exitCode?: number } | undefined;
-    const content = typeof message.content === "string" ? message.content : message.content[0]?.text || "";
-    let text = "";
-    if (details?.prompt) text += theme.fg("accent", "/claude ") + details.prompt + "\n\n";
-    text += statusText(theme, details?.exitCode, "Claude", content);
-    if (details?.executionTime) {
-      text += theme.fg("dim", ` ${(details.executionTime / 1000).toFixed(1)}s`);
-    }
-    if (content) text += `\n\n${content}`;
-    return new Text(text, 0, 0);
-  });
+	// Accumulated response state during a prompt turn
+	let responseText = "";
+	let thinkingText = "";
+	const toolCalls = new Map<string, ToolCallState>();
+	let planTasks: Array<{ title: string; status: string }> | null = null;
 
-  pi.registerCommand("claude", {
-    description: "Ask Claude a quick question (one-shot, result stays in context)",
-    async handler(args, ctx) {
-      const prompt = args.trim();
-      if (!prompt) {
-        ctx.ui.notify("Usage: /claude <question>", "warning");
-        return;
-      }
-      ctx.ui.notify("⟳ Asking Claude...", "info");
-      const result = await spawnAcpx({
-        args: ["--format", "quiet", "--approve-reads", "claude", "exec", "--file", "-"],
-        prompt,
-      });
-      pi.sendMessage(
-        {
-          customType: CLAUDE_MSG_TYPE,
-          content: result.text,
-          display: true,
-          details: { prompt, executionTime: result.executionTime, exitCode: result.exitCode },
-        },
-        { triggerTurn: false },
-      );
-    },
-  });
+	// Terminal management
+	let nextTerminalId = 1;
+	const terminals = new Map<string, TerminalState>();
 
-  pi.registerTool({
-    name: "ClaudeAcp",
-    label: "Claude ACP",
-    description: "Send a prompt to Claude Code via ACP. Sessions persist conversation history for follow-ups.",
-    promptGuidelines: [
-      "IMPORTANT: If the prompt asks Claude to write, edit, or run commands, you MUST set permissions to 'approve-all'. The default 'approve-reads' only allows reading files and will cause the call to fail with permission denied.",
-      "Use session_name for multi-turn conversations; use oneShot for independent questions",
-      "Pick descriptive session names (e.g. 'refactor-auth', not 'session1')",
-    ],
-    parameters: Type.Object({
-      prompt: Type.String({ description: "The prompt to send" }),
-      session_name: Type.Optional(
-        Type.String({ description: "Named session (auto-created if needed)" }),
-      ),
-      permissions: Type.Optional(
-        Type.Union(
-          [
-            Type.Literal("approve-all"),
-            Type.Literal("approve-reads"),
-            Type.Literal("deny-all"),
-          ],
-          { description: "Permission level (default: approve-reads). Use approve-all if the prompt requires writing/editing files or running commands." },
-        ),
-      ),
-      oneShot: Type.Optional(
-        Type.Boolean({
-          description: "Stateless one-shot mode — skips session setup but doesn't allow for followups",
-        }),
-      ),
-      noWait: Type.Optional(
-        Type.Boolean({ description: "Queue prompt and return immediately" }),
-      ),
-      timeout: Type.Optional(
-        Type.Number({ description: "Max seconds to wait" }),
-      ),
-    }),
-    renderCall(args, theme) {
-      let text = theme.fg("toolTitle", theme.bold("ClaudeAcp "));
-      if (args.session_name) text += theme.fg("accent", `[${args.session_name}] `);
-      else if (args.oneShot) text += theme.fg("accent", "[one-shot] ");
-      const preview =
-        args.prompt.length > 200
-          ? args.prompt.substring(0, 200) + "..."
-          : args.prompt;
-      text += theme.fg("muted", `"${preview}"`);
-      return new Text(text, 0, 0);
-    },
-    renderResult(result, { expanded, isPartial }, theme) {
-      const details = result.details as ClaudeAcpDetails | undefined;
+	// UI context ref (set during command handler, used in callbacks)
+	let uiCtx: ExtensionContext | null = null;
 
-      if (isPartial) {
-        const elapsed = details?.executionTime
-          ? `${(details.executionTime / 1000).toFixed(0)}s`
-          : "";
-        let text = theme.fg("warning", `⟳ Claude working${elapsed ? ` (${elapsed})` : ""}...`);
-        const responseText = result.content[0];
-        if (responseText?.type === "text" && responseText.text) {
-          const lastLine = responseText.text.trim().split("\n").pop() || "";
-          if (lastLine) text += ` ${theme.fg("muted", lastLine.substring(0, 120))}`;
-        }
-        return new Text(text, 0, 0);
-      }
+	function resetStreamState() {
+		responseText = "";
+		thinkingText = "";
+		toolCalls.clear();
+		planTasks = null;
+	}
 
-      const responseText = result.content[0];
-      const content = responseText?.type === "text" ? responseText.text : "";
-      let text = statusText(theme, details?.exitCode, "Claude responded", content);
+	function updateFooter() {
+		if (!uiCtx) return;
+		if (!active) {
+			uiCtx.ui.setStatus("claude-acp", undefined);
+			return;
+		}
+		let label = "Claude Code";
+		if (currentMode && currentMode !== "code") label += ` [${currentMode}]`;
+		const dot = prompting ? " ◉" : " ●";
+		const color = prompting ? "warning" : "success";
+		uiCtx.ui.setStatus("claude-acp", uiCtx.ui.theme.fg(color, label + dot));
+	}
 
-      if (!expanded) {
-        if (content) text += ` ${theme.fg("muted", firstLinePreview(content))}`;
-        text += ` (${keyHint("expandTools", "for details")})`;
-        return new Text(text, 0, 0);
-      }
+	function updateStreamWidget() {
+		if (!uiCtx) return;
+		const lines: string[] = ["◉ Claude responding..."];
 
-      if (details) {
-        if (details.session_name)
-          text += `\n${theme.fg("dim", `Session: ${details.session_name}`)}`;
-        text += `\n${theme.fg("dim", `Time: ${(details.executionTime / 1000).toFixed(2)}s`)}`;
-        text += `\n\n${theme.fg("muted", "─ Prompt (" + details.promptLength + " chars) " + "─".repeat(Math.max(0, 26 - String(details.promptLength).length)))}`;
-        text += `\n${details.prompt}`;
-      }
+		// Show tool call activity
+		for (const [, tc] of toolCalls) {
+			const icon = tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "◉";
+			let line = `  ${icon} ${tc.name}`;
+			// Show file path from locations or rawInput
+			const path = tc.locations?.[0]?.path ?? extractPath(tc.rawInput);
+			if (path) line += ` ${path}`;
+			if (tc.status !== "completed" && tc.status !== "failed") line += ` [${tc.status}]`;
+			lines.push(line);
+		}
 
-      if (content) {
-        text += `\n\n${theme.fg("muted", "─ Response " + "─".repeat(29))}\n${content}`;
-      }
-      return new Text(text, 0, 0);
-    },
-    async execute(id, params, signal, onUpdate) {
-      const sessionName = params.session_name && params.session_name !== "undefined" ? params.session_name : undefined;
+		// Show plan tasks
+		if (planTasks) {
+			lines.push("");
+			for (const t of planTasks) {
+				const icon = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○";
+				lines.push(`  ${icon} ${t.title}`);
+			}
+		}
 
-      if (sessionName) await ensureSession(sessionName);
+		// Show tail of response text
+		if (responseText) {
+			lines.push("");
+			const respLines = responseText.split("\n");
+			const visible = respLines.length > 15 ? respLines.slice(-15) : respLines;
+			lines.push(...visible);
+		}
 
-      // Build acpx args
-      const args: string[] = ["--format", "quiet"];
-      args.push(`--${params.permissions || "approve-reads"}`);
-      if (params.timeout) args.push("--timeout", String(params.timeout));
-      args.push("claude");
-      if (params.oneShot) args.push("exec");
-      else if (sessionName) args.push("-s", sessionName);
-      if (params.noWait) args.push("--no-wait");
-      args.push("--file", "-");
+		uiCtx.ui.setWidget(WIDGET_KEY, lines);
+	}
 
-      const startTime = Date.now();
-      const result = await spawnAcpx({
-        args,
-        prompt: params.prompt,
-        signal,
-        onStdout(stdout) {
-          onUpdate?.({
-            content: [{ type: "text", text: stdout.trim() }],
-            details: {
-              session_name: sessionName,
-              prompt: params.prompt,
-              promptLength: params.prompt.length,
-              executionTime: Date.now() - startTime,
-            } satisfies ClaudeAcpDetails,
-          });
-        },
-      });
+	function extractPath(rawInput: unknown): string | undefined {
+		if (!rawInput || typeof rawInput !== "object") return undefined;
+		const input = rawInput as Record<string, unknown>;
+		if (typeof input.file_path === "string") return input.file_path;
+		if (typeof input.path === "string") return input.path;
+		if (typeof input.command === "string") return input.command.substring(0, 80);
+		return undefined;
+	}
 
-      if (result.exitCode != null && result.exitCode !== 0) {
-        const reason = exitReason(result.exitCode);
-        throw new Error(`ClaudeAcp failed: ${reason}. Output: ${result.text.substring(0, 500)}`);
-      }
+	function clearStreamWidget() {
+		uiCtx?.ui.setWidget(WIDGET_KEY, undefined);
+	}
 
-      const details: ClaudeAcpDetails = {
-        session_name: sessionName,
-        prompt: params.prompt,
-        promptLength: params.prompt.length,
-        executionTime: result.executionTime,
-        exitCode: result.exitCode,
-      };
-      return { content: [{ type: "text", text: result.text }], details };
-    },
-  });
+	// --- ACP Client Callbacks ---
+
+	function handleSessionUpdate(params: SessionNotification): void {
+		const update = params.update as SessionUpdate;
+
+		switch (update.sessionUpdate) {
+			case "agent_message_chunk": {
+				const block = update.content;
+				if (block.type === "text") {
+					responseText += block.text;
+					updateStreamWidget();
+				}
+				break;
+			}
+
+			case "agent_thought_chunk": {
+				const block = update.content;
+				if (block.type === "text") {
+					thinkingText += block.text;
+				}
+				break;
+			}
+
+			case "tool_call": {
+				const tc = update as ToolCall & { sessionUpdate: string };
+				toolCalls.set(tc.toolCallId, {
+					name: tc.title ?? "tool",
+					status: tc.status ?? "pending",
+					rawInput: tc.rawInput,
+					rawOutput: tc.rawOutput,
+					content: tc.content as ToolCallContentBlock[] | undefined,
+					locations: tc.locations as Array<{ path?: string; uri?: string }> | undefined,
+				});
+				updateStreamWidget();
+				break;
+			}
+
+			case "tool_call_update": {
+				const tc = update as ToolCallUpdate & { sessionUpdate: string };
+				const existing = toolCalls.get(tc.toolCallId);
+				if (existing) {
+					if (tc.title) existing.name = tc.title;
+					if (tc.status) existing.status = tc.status;
+					if (tc.rawInput !== undefined) existing.rawInput = tc.rawInput;
+					if (tc.rawOutput !== undefined) existing.rawOutput = tc.rawOutput;
+					if (tc.content) existing.content = tc.content as ToolCallContentBlock[] | undefined;
+					if (tc.locations) existing.locations = tc.locations as Array<{ path?: string; uri?: string }> | undefined;
+				}
+				updateStreamWidget();
+				break;
+			}
+
+			case "current_mode_update": {
+				const modeUpdate = update as { currentModeId?: string };
+				currentMode = modeUpdate.currentModeId ?? null;
+				updateFooter();
+				break;
+			}
+
+			case "plan": {
+				const plan = update as { tasks?: Array<{ title: string; status: string }> };
+				if (plan.tasks) planTasks = plan.tasks;
+				updateStreamWidget();
+				break;
+			}
+
+			default:
+				break;
+		}
+	}
+
+	/** Format a completed tool call for the final persistent message. */
+	function formatToolContent(tc: ToolCallState): string {
+		const parts: string[] = [];
+
+		// Show file path
+		const path = tc.locations?.[0]?.path ?? extractPath(tc.rawInput);
+		if (path) parts.push(path);
+
+		// Show diffs from content
+		if (tc.content) {
+			for (const block of tc.content) {
+				if (block.type === "diff" && block.path) {
+					parts.push(`--- ${block.path}`);
+					if (block.oldText != null && block.newText != null) {
+						parts.push(formatSimpleDiff(block.oldText, block.newText));
+					} else if (block.newText != null) {
+						parts.push(block.newText.substring(0, 1000));
+					}
+				} else if (block.type === "content" && block.text) {
+					parts.push(block.text.substring(0, 1000));
+				}
+			}
+		}
+
+		// Fall back to rawInput/rawOutput if no structured content
+		if (parts.length === 0) {
+			if (tc.rawInput) {
+				const s = typeof tc.rawInput === "string" ? tc.rawInput : JSON.stringify(tc.rawInput, null, 2);
+				parts.push(s.substring(0, 500));
+			}
+			if (tc.rawOutput) {
+				const s = typeof tc.rawOutput === "string" ? tc.rawOutput : JSON.stringify(tc.rawOutput, null, 2);
+				parts.push(s.substring(0, 1000));
+			}
+		}
+
+		return parts.join("\n");
+	}
+
+	function formatSimpleDiff(oldText: string, newText: string): string {
+		const oldLines = oldText.split("\n");
+		const newLines = newText.split("\n");
+		const out: string[] = [];
+		const maxLines = 40;
+		let count = 0;
+		// Simple line-by-line: show removed then added
+		for (const line of oldLines) {
+			if (!newLines.includes(line)) {
+				out.push(`- ${line}`);
+				if (++count >= maxLines) { out.push("..."); return out.join("\n"); }
+			}
+		}
+		for (const line of newLines) {
+			if (!oldLines.includes(line)) {
+				out.push(`+ ${line}`);
+				if (++count >= maxLines) { out.push("..."); return out.join("\n"); }
+			}
+		}
+		return out.join("\n") || "(no changes)";
+	}
+
+	/** Emit final persistent messages for all tool calls accumulated during this turn. */
+	function emitFinalToolMessages() {
+		for (const [toolCallId, tc] of toolCalls) {
+			pi.sendMessage(
+				{
+					customType: MSG_TOOL,
+					content: formatToolContent(tc),
+					display: true,
+					details: { toolCallId, name: tc.name, status: tc.status },
+				},
+				{ triggerTurn: false },
+			);
+		}
+	}
+
+	function handleRequestPermission(params: RequestPermissionRequest): RequestPermissionResponse {
+		// Auto-approve everything for now
+		const allowOption = params.options.find(
+			(o) => o.kind === "allow_once" || o.kind === "allow_always",
+		);
+		if (allowOption) {
+			return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
+		}
+		return { outcome: { outcome: "cancelled" } };
+	}
+
+	// --- Filesystem callbacks ---
+
+	async function handleReadTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+		const content = await readFile(params.path, "utf-8");
+		if (params.line != null || params.limit != null) {
+			const lines = content.split("\n");
+			const start = Math.max(0, (params.line ?? 1) - 1);
+			const end = params.limit != null ? start + params.limit : lines.length;
+			return { content: lines.slice(start, end).join("\n") };
+		}
+		return { content };
+	}
+
+	async function handleWriteTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+		await mkdir(dirname(params.path), { recursive: true });
+		await writeFile(params.path, params.content, "utf-8");
+		return {};
+	}
+
+	// --- Terminal callbacks ---
+
+	function handleCreateTerminal(params: CreateTerminalRequest): CreateTerminalResponse {
+		const id = `term-${nextTerminalId++}`;
+		const args = params.args ?? [];
+		const proc = spawn(params.command, args, {
+			cwd: params.cwd ?? process.cwd(),
+			stdio: ["ignore", "pipe", "pipe"],
+			env: {
+				...process.env,
+				...(params.env
+					? Object.fromEntries(params.env.map((e) => [e.name, e.value]))
+					: {}),
+			},
+		});
+
+		const state: TerminalState = { proc, output: "" };
+		terminals.set(id, state);
+
+		proc.stdout?.on("data", (chunk: Buffer) => {
+			state.output += chunk.toString();
+			if (params.outputByteLimit && state.output.length > params.outputByteLimit) {
+				state.output = state.output.slice(-params.outputByteLimit);
+			}
+		});
+		proc.stderr?.on("data", (chunk: Buffer) => {
+			state.output += chunk.toString();
+			if (params.outputByteLimit && state.output.length > params.outputByteLimit) {
+				state.output = state.output.slice(-params.outputByteLimit);
+			}
+		});
+		proc.on("close", (code, signal) => {
+			state.exitCode = code;
+			state.signal = signal;
+		});
+
+		return { terminalId: id };
+	}
+
+	function handleTerminalOutput(params: TerminalOutputRequest): TerminalOutputResponse {
+		const state = terminals.get(params.terminalId);
+		if (!state) return { output: "", truncated: false };
+		return {
+			output: state.output,
+			truncated: false,
+			...(state.exitCode !== undefined || state.signal !== undefined
+				? { exitStatus: { exitCode: state.exitCode, signal: state.signal } }
+				: {}),
+		};
+	}
+
+	async function handleWaitForTerminalExit(
+		params: WaitForTerminalExitRequest,
+	): Promise<WaitForTerminalExitResponse> {
+		const state = terminals.get(params.terminalId);
+		if (!state) return { exitCode: 1 };
+		if (state.exitCode !== undefined || state.signal !== undefined) {
+			return { exitCode: state.exitCode, signal: state.signal };
+		}
+		return new Promise((resolve) => {
+			state.proc.on("close", (code, signal) => {
+				resolve({ exitCode: code, signal });
+			});
+		});
+	}
+
+	function handleKillTerminal(
+		params: KillTerminalRequest,
+	): KillTerminalResponse | void {
+		const state = terminals.get(params.terminalId);
+		if (state) state.proc.kill();
+	}
+
+	function handleReleaseTerminal(
+		params: ReleaseTerminalRequest,
+	): ReleaseTerminalResponse | void {
+		const state = terminals.get(params.terminalId);
+		if (state) {
+			state.proc.kill();
+			terminals.delete(params.terminalId);
+		}
+	}
+
+	// --- Connection lifecycle ---
+
+	async function connect(ctx: ExtensionContext): Promise<void> {
+		uiCtx = ctx;
+
+		const child = spawn("npx", ["-y", "@zed-industries/claude-agent-acp"], {
+			cwd: process.cwd(),
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		agentProcess = child;
+
+		child.stderr?.on("data", () => {
+			// Suppress stderr noise from npx/agent startup
+		});
+
+		child.on("close", () => {
+			if (active) {
+				active = false;
+				connection = null;
+				sessionId = null;
+				agentProcess = null;
+				updateFooter();
+				pi.sendMessage(
+					{
+						customType: MSG_STATUS,
+						content: "Claude Code disconnected",
+						display: true,
+						details: {},
+					},
+					{ triggerTurn: false },
+				);
+			}
+		});
+
+		const input = Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>;
+		const output = Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>;
+		const stream = ndJsonStream(input, output);
+
+		connection = new ClientSideConnection(
+			() => ({
+				sessionUpdate: async (params) => handleSessionUpdate(params),
+				requestPermission: async (params) => handleRequestPermission(params),
+				readTextFile: async (params) => handleReadTextFile(params),
+				writeTextFile: async (params) => handleWriteTextFile(params),
+				createTerminal: async (params) => handleCreateTerminal(params),
+				terminalOutput: async (params) => handleTerminalOutput(params),
+				waitForTerminalExit: async (params) => handleWaitForTerminalExit(params),
+				killTerminal: async (params) => handleKillTerminal(params),
+				releaseTerminal: async (params) => handleReleaseTerminal(params),
+			}),
+			stream,
+		);
+
+		const initResult = await connection.initialize({
+			protocolVersion: PROTOCOL_VERSION,
+			clientCapabilities: {
+				fs: { readTextFile: true, writeTextFile: true },
+				terminal: true,
+			},
+			clientInfo: { name: "pi-claude-acp-mode", version: "0.1.0" },
+		});
+
+		const session = await connection.newSession({
+			cwd: process.cwd(),
+			mcpServers: [],
+		});
+		sessionId = session.sessionId;
+
+		active = true;
+		updateFooter();
+
+		pi.sendMessage(
+			{
+				customType: MSG_STATUS,
+				content: `Connected to Claude Code (${initResult.agentInfo?.name ?? "agent"})`,
+				display: true,
+				details: {},
+			},
+			{ triggerTurn: false },
+		);
+	}
+
+	function disconnect() {
+		active = false;
+		if (agentProcess) {
+			agentProcess.kill();
+			agentProcess = null;
+		}
+		// Kill any lingering terminals
+		for (const [, state] of terminals) {
+			state.proc.kill();
+		}
+		terminals.clear();
+		connection = null;
+		sessionId = null;
+		currentMode = null;
+		resetStreamState();
+		updateFooter();
+	}
+
+	async function handlePrompt(text: string): Promise<void> {
+		if (!connection || !sessionId) return;
+
+		// Echo the user's message so it's visible in history
+		pi.sendMessage(
+			{
+				customType: MSG_USER,
+				content: `[You → Claude Code] ${text}`,
+				display: true,
+				details: {},
+			},
+			{ triggerTurn: false },
+		);
+
+		resetStreamState();
+		prompting = true;
+		updateFooter();
+		uiCtx?.ui.setWidget(WIDGET_KEY, ["◉ Waiting for Claude Code..."]);
+
+		try {
+			const result = await connection.prompt({
+				sessionId,
+				prompt: [{ type: "text", text }],
+			});
+
+			// Clear streaming widget and emit final persistent messages
+			clearStreamWidget();
+			emitFinalToolMessages();
+			if (planTasks) {
+				const planText = planTasks
+					.map((t) => {
+						const icon = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○";
+						return `${icon} ${t.title}`;
+					})
+					.join("\n");
+				pi.sendMessage(
+					{ customType: MSG_RESPONSE, content: `Plan:\n${planText}`, display: true, details: { isPlan: true } },
+					{ triggerTurn: false },
+				);
+			}
+			if (responseText) {
+				pi.sendMessage(
+					{
+						customType: MSG_RESPONSE,
+						content: `[Claude Code] ${responseText}`,
+						display: true,
+						details: {
+							thinking: thinkingText,
+							stopReason: result.stopReason,
+						},
+					},
+					{ triggerTurn: false },
+				);
+			}
+		} catch (err) {
+			clearStreamWidget();
+			const msg = err instanceof Error ? err.message : String(err);
+			pi.sendMessage(
+				{
+					customType: MSG_STATUS,
+					content: `Error: ${msg}`,
+					display: true,
+					details: { error: true },
+				},
+				{ triggerTurn: false },
+			);
+		} finally {
+			prompting = false;
+			updateFooter();
+		}
+	}
+
+	// --- Message Renderers ---
+
+	pi.registerMessageRenderer(MSG_USER, (message, _opts, theme) => {
+		const raw = typeof message.content === "string" ? message.content : "";
+		const content = raw.replace(/^\[You → Claude Code] /, "");
+		return new Text(theme.fg("userMessageText", `▶ ${content}`), 0, 0);
+	});
+
+	pi.registerMessageRenderer(MSG_RESPONSE, (message, { expanded }, theme) => {
+		// Build markdown theme from pi's active theme so Claude Code responses render
+		// with proper markdown formatting (headings, code blocks, lists, etc.)
+		const mdTheme: MarkdownTheme = {
+			heading: (t) => theme.bold(theme.fg("mdHeading", t)),
+			link: (t) => theme.fg("mdLink", t),
+			linkUrl: (t) => theme.fg("mdLinkUrl", t),
+			code: (t) => theme.fg("mdCode", t),
+			codeBlock: (t) => theme.fg("mdCodeBlock", t),
+			codeBlockBorder: (t) => theme.fg("mdCodeBlockBorder", t),
+			quote: (t) => theme.fg("mdQuote", t),
+			quoteBorder: (t) => theme.fg("mdQuoteBorder", t),
+			hr: (t) => theme.fg("mdHr", t),
+			listBullet: (t) => theme.fg("mdListBullet", t),
+			bold: (t) => theme.bold(t),
+			italic: (t) => theme.italic(t),
+			underline: (t) => theme.underline(t),
+			strikethrough: (t) => theme.strikethrough(t),
+		};
+		const details = message.details as {
+			thinking?: string;
+			isPlan?: boolean;
+			stopReason?: string;
+		} | undefined;
+		const raw = typeof message.content === "string"
+			? message.content
+			: Array.isArray(message.content)
+				? message.content.map((b: any) => b.text ?? "").join("")
+				: "";
+		const content = raw.replace(/^\[Claude Code] /, "");
+
+		if (details?.isPlan) {
+			const planBox = new Box(0, 0);
+			planBox.addChild(new Text(theme.fg("accent", "◇ Plan"), 0, 0));
+			planBox.addChild(new Markdown(content, 0, 0, mdTheme, {
+				color: (t) => theme.fg("mdLink", t),
+			}));
+			return planBox;
+		}
+
+		const box = new Box(0, 0);
+		box.addChild(new Text(theme.fg("success", "● Claude"), 0, 0));
+		box.addChild(new Markdown(content, 0, 0, mdTheme, {
+			color: (t) => theme.fg("mdLink", t),
+		}));
+
+		if (expanded && details?.thinking) {
+			box.addChild(new Text(
+				theme.fg("dim", "─ Thinking " + "─".repeat(29)) + "\n" + theme.fg("dim", details.thinking),
+				0, 0,
+			));
+		}
+
+		return box;
+	});
+
+	pi.registerMessageRenderer(MSG_TOOL, (message, { expanded }, theme) => {
+		const details = message.details as {
+			name?: string;
+			status?: string;
+			toolCallId?: string;
+		} | undefined;
+		const content = typeof message.content === "string" ? message.content : "";
+
+		const statusIcon =
+			details?.status === "completed" ? theme.fg("success", "✓")
+			: details?.status === "failed" ? theme.fg("error", "✗")
+			: theme.fg("warning", "◉");
+
+		let text = `${statusIcon} ${theme.fg("toolTitle", details?.name ?? "tool")}`;
+
+		// Show first line preview when collapsed
+		const firstLine = content.split("\n")[0] || "";
+		if (firstLine) text += ` ${theme.fg("muted", firstLine.substring(0, 120))}`;
+
+		if (expanded && content.includes("\n")) {
+			// Color diff lines
+			const body = content
+				.split("\n")
+				.slice(1)
+				.map((line) => {
+					if (line.startsWith("+ ")) return theme.fg("toolDiffAdded", line);
+					if (line.startsWith("- ")) return theme.fg("toolDiffRemoved", line);
+					if (line.startsWith("--- ")) return theme.fg("dim", line);
+					return theme.fg("muted", line);
+				})
+				.join("\n");
+			text += "\n" + body;
+		}
+
+		return new Text(text, 0, 0);
+	});
+
+	pi.registerMessageRenderer(MSG_STATUS, (message, _opts, theme) => {
+		const details = message.details as { error?: boolean } | undefined;
+		const content = typeof message.content === "string" ? message.content : "";
+		const color = details?.error ? "error" : "accent";
+		return new Text(theme.fg(color, `◆ ${content}`), 0, 0);
+	});
+
+	// --- Input Interception ---
+
+	pi.on("input", async (event, ctx) => {
+		if (!active) return { action: "continue" as const };
+
+		uiCtx = ctx;
+		const text = event.text.trim();
+		if (!text) return { action: "continue" as const };
+
+		// Allow /commands to pass through to pi
+		if (text.startsWith("/")) return { action: "continue" as const };
+
+		// Let messages from sendUserMessage (e.g. /pi command) go to pi's LLM
+		if (event.source === "extension") return { action: "continue" as const };
+
+		// Forward to Claude Code
+		handlePrompt(text);
+		return { action: "handled" as const };
+	});
+
+	// --- /pi Command (talk to Pi while in claude-acp) ---
+
+	pi.registerCommand("pi", {
+		description: "Send a message to Pi's LLM instead of Claude Code (only useful in Claude Mode)",
+		async handler(args) {
+			const text = args?.trim();
+			if (!text) return;
+			pi.sendUserMessage(text);
+		},
+	});
+
+	// --- /claude:on and /claude:off Commands ---
+
+	pi.registerCommand("claude:on", {
+		description: "Connect to Claude Code — forward messages via ACP",
+		async handler(_args, ctx) {
+			uiCtx = ctx;
+			if (active) {
+				ctx.ui.notify("Claude Code already connected", "info");
+				return;
+			}
+			ctx.ui.notify("Connecting to Claude Code...", "info");
+			try {
+				await connect(ctx);
+				ctx.ui.notify("Claude Code connected", "info");
+				pi.appendEntry(ENTRY_TYPE, { active: true });
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				ctx.ui.notify(`Failed to connect: ${msg}`, "error");
+			}
+		},
+	});
+
+	pi.registerCommand("claude:off", {
+		description: "Disconnect from Claude Code",
+		async handler(_args, ctx) {
+			uiCtx = ctx;
+			if (!active) {
+				ctx.ui.notify("Claude Code not connected", "info");
+				return;
+			}
+			disconnect();
+			ctx.ui.notify("Claude Code disconnected", "info");
+			pi.appendEntry(ENTRY_TYPE, { active: false });
+		},
+	});
+
+	// --- Session events ---
+
+	function restoreState(ctx: ExtensionContext) {
+		uiCtx = ctx;
+		// Don't auto-reconnect, just restore footer state
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type === "custom" && entry.customType === ENTRY_TYPE) {
+				const data = entry.data as { active?: boolean } | undefined;
+				if (data?.active && !active) {
+					// Was active before fork/resume — show hint
+					ctx.ui.setStatus(
+						"claude-acp",
+						ctx.ui.theme.fg("dim", "Claude Code ○ (run /claude:on to reconnect)"),
+					);
+				}
+			}
+		}
+	}
+
+	pi.on("session_start", async (_event, ctx) => restoreState(ctx));
+	pi.on("session_fork", async (_event, ctx) => restoreState(ctx));
+	pi.on("session_switch", async (_event, ctx) => restoreState(ctx));
+	pi.on("session_tree", async (_event, ctx) => restoreState(ctx));
+
+	pi.on("session_shutdown", async () => {
+		if (active) disconnect();
+	});
 }
