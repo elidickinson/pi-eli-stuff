@@ -68,6 +68,7 @@ Interactive Claude Code mode via ACP. Forwards all user messages to Claude Code 
 /claude:on    # Connect (resumes previous session)
 /claude:off   # Disconnect (preserves session)
 /claude:clear # Disconnect and start fresh
+/claude:btw   # Quick one-shot question (display only, no context)
 /pi <msg>     # Send a message to Pi's LLM while connected
 ```
 

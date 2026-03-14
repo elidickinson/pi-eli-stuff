@@ -8,6 +8,7 @@
  *   /claude:on    - Connect (resumes previous session)
  *   /claude:off   - Disconnect (preserves session)
  *   /claude:clear - Disconnect and forget session
+ *   /claude:btw   - Quick one-shot question (display only, no context)
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -731,6 +732,9 @@ export default function (pi: ExtensionAPI) {
 	// --- Input Interception ---
 
 	pi.on("input", async (event, ctx) => {
+		// Clear any btw widget on new input
+		ctx.ui.setWidget(BTW_WIDGET, undefined);
+
 		if (!active) return { action: "continue" as const };
 
 		uiCtx = ctx;
@@ -748,18 +752,9 @@ export default function (pi: ExtensionAPI) {
 		return { action: "handled" as const };
 	});
 
-	// --- /pi Command (talk to Pi while in claude-acp) ---
+	// --- Commands (registration order = display order) ---
 
-	pi.registerCommand("pi", {
-		description: "Send a message to Pi's LLM instead of Claude Code (only useful in Claude Mode)",
-		async handler(args) {
-			const text = args?.trim();
-			if (!text) return;
-			pi.sendUserMessage(text);
-		},
-	});
-
-	// --- /claude:on and /claude:off Commands ---
+	const BTW_WIDGET = "claude-btw";
 
 	pi.registerCommand("claude:on", {
 		description: "Connect to Claude Code — resumes previous session if available",
@@ -803,6 +798,56 @@ export default function (pi: ExtensionAPI) {
 			lastSessionId = null;
 			ctx.ui.notify("Claude Code session cleared", "info");
 			pi.appendEntry(ENTRY_TYPE, { active: false, sessionId: null });
+		},
+	});
+
+	pi.registerCommand("claude:btw", {
+		description: "Ask Claude a quick question (display only, not added to context)",
+		async handler(args, ctx) {
+			const prompt = args?.trim();
+			if (!prompt) {
+				ctx.ui.notify("Usage: /claude:btw <question>", "warning");
+				return;
+			}
+			ctx.ui.setWidget(BTW_WIDGET, ["◉ Asking Claude..."]);
+			try {
+				const result = await new Promise<string>((resolve, reject) => {
+					const proc = spawn("claude", [
+						"-p",
+						"--allowed-tools", "Read,Glob,Grep,Bash,WebSearch,WebFetch",
+					], {
+						cwd: process.cwd(),
+						stdio: ["pipe", "pipe", "pipe"],
+					});
+					let stdout = "";
+					proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
+					proc.on("close", (code) => {
+						if (code !== 0 && !stdout.trim()) reject(new Error(`claude exited ${code}`));
+						else resolve(stdout.trim());
+					});
+					proc.on("error", reject);
+					proc.stdin.write(prompt);
+					proc.stdin.end();
+				});
+				const lines = result.split("\n");
+				ctx.ui.setWidget(BTW_WIDGET, [
+					ctx.ui.theme.fg("mdLink", "[claude:btw]") + " " + ctx.ui.theme.fg("dim", prompt),
+					"",
+					...lines,
+				]);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				ctx.ui.setWidget(BTW_WIDGET, [ctx.ui.theme.fg("error", `claude:btw failed: ${msg}`)]);
+			}
+		},
+	});
+
+	pi.registerCommand("pi", {
+		description: "Send a message to Pi's LLM instead of Claude Code (only useful in Claude Mode)",
+		async handler(args) {
+			const text = args?.trim();
+			if (!text) return;
+			pi.sendUserMessage(text);
 		},
 	});
 
