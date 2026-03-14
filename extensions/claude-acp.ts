@@ -39,10 +39,9 @@ function spawnAcpx(opts: SpawnAcpxOptions): Promise<AcpxResult> {
 
     proc.on("close", (code) => {
       opts.signal?.removeEventListener("abort", onAbort);
-      if (opts.signal?.aborted) return reject(new Error("aborted"));
       resolve({
-        text: stdout.trim() || stderr.trim() || `(exit ${code})`,
-        exitCode: code ?? undefined,
+        text: stdout.trim() || stderr.trim() || (opts.signal?.aborted ? "(aborted)" : `(exit ${code})`),
+        exitCode: opts.signal?.aborted ? 130 : (code ?? undefined),
         executionTime: Date.now() - startTime,
       });
     });

@@ -47,15 +47,18 @@ Runs parallel web research via multiple agents and synthesizes findings into a c
 
 ## Phase 1: Parallel Research
 
-**Spawn all subagents at once without waiting for any to complete so they work in parallel.**
+**Spawn all subagents at once without waiting for any to complete so they work in parallel. You should wait for them all to complete to assemble your results. **
+
 
 Replace `TOPIC`, `RESEARCH_PROMPT`, and `$OUTPUT_DIR` with the values from Phase 0 before executing.
 
 ### Subagent 1: Claude Web (always)
 
-Create a subagent that uses the `ClaudeAcp` tool (from `@extensions/claude-acp.ts`) to do research with claude.
+Create a background subagent using the Agent tool that is instructed to ask claude to do research.
 
 **Session:** `research-TOPIC-claude` (auto-created by the tool)
+
+Here's an example of what you should ask the subagent to do:
 
 ```
 ClaudeAcp({
@@ -86,7 +89,7 @@ The synthesis happens in Phase 2 by the orchestrator who has access to all agent
 
 ### Subagent 2: Pi Web (always)
 
-Create a subagent that uses a prompt like:
+Create a background subagent with your Agent tool that uses a prompt like:
 ```
 RESEARCH_PROMPT
 
@@ -111,7 +114,7 @@ CRITICAL RULE: Do NOT synthesize or analyze. Just report findings with sources.
 
 **Only spawn if** the task involves sites that block automated search agents or require on-site interaction. Examples: TripAdvisor, restaurant reservations, booking sites, directory sites, forums with custom search, price comparison requiring navigation.
 
-Create a subagent with a prompt like:
+Create a background subagent with a prompt like:
 ```
 RESEARCH_PROMPT
 

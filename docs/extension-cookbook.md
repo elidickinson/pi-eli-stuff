@@ -2,6 +2,8 @@
 
 Examples are drawn from extensions in this repo. See also the [official extension docs](../vendor/pi-mono/packages/coding-agent/docs/extensions.md) for the full API reference.
 
+> **Important:** Never guess at pi API method/property names. Always verify against the canonical types in `vendor/pi-mono/packages/coding-agent/src/core/extensions/types.ts`. For example, `ExtensionContext` exposes `ctx.model` (a property), not `ctx.getModel()` — the latter exists on an internal interface and will throw at runtime.
+
 ## Minimal Extension
 
 The simplest extension wraps a built-in tool factory. From [`extensions/grep.ts`](../extensions/grep.ts):

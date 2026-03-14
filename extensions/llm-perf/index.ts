@@ -17,7 +17,7 @@ import { Text } from "@mariozechner/pi-tui";
 import { randomUUID } from "node:crypto";
 import { handleTurnStart, handleMessageStart, handleMessageUpdate, handleMessageEnd, type PendingCall } from "./state-machine.js";
 import { getDbPath, openDb, insertCall, queryCalls, purgeBefore, getDistinctModels } from "./db.js";
-import { computeModelStats, formatReportHorizontal, type TimeRangeStats } from "./stats.js";
+import { computeModelStats, computeAggregateStats, formatMs, formatTokS, formatReportHorizontal, type TimeRangeStats } from "./stats.js";
 import type Database from "better-sqlite3";
 
 const DEBUG = process.env.LLM_PERF_DEBUG === "1";
@@ -28,6 +28,7 @@ function debug(...args: unknown[]) {
 
 // ── Argument parsing ──
 
+const MIN15 = 15 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
@@ -88,6 +89,7 @@ export default function (pi: ExtensionAPI) {
 	const sessionId = randomUUID();
 	let pending: PendingCall | null = null;
 	let db: Database.Database | null = null;
+	let currentModelFilter: string | undefined;
 
 	function getDb(): Database.Database | null {
 		if (db) return db;
@@ -101,9 +103,27 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	function updateStatusBar(d: Database.Database, ctx: { ui: { setStatus(key: string, text: string | undefined): void; theme: any } }, now: number) {
+		try {
+			const rows = queryCalls(d, { sinceMs: now - MIN15, modelFilter: currentModelFilter });
+			const agg = computeAggregateStats(rows);
+			if (agg.ttftP50 == null && agg.tokPerSecP50 == null) {
+				ctx.ui.setStatus("llm-perf", undefined);
+				return;
+			}
+			const parts: string[] = [];
+			if (agg.ttftP50 != null) parts.push(`TTFT ${formatMs(agg.ttftP50)}`);
+			if (agg.tokPerSecP50 != null) parts.push(`${formatTokS(agg.tokPerSecP50)} tok/s`);
+			ctx.ui.setStatus("llm-perf", ctx.ui.theme.fg("dim", parts.join("  ")));
+		} catch (e) {
+			debug("status bar update failed:", e);
+		}
+	}
+
 	// ── Event handlers ──
 
 	pi.on("turn_start", (event, ctx) => {
+		if (!currentModelFilter) currentModelFilter = ctx.model?.id;
 		const usage = ctx.getContextUsage();
 		pending = handleTurnStart(
 			pending,
@@ -122,12 +142,19 @@ export default function (pi: ExtensionAPI) {
 		debug(`message_start provider=${msg.provider} model=${msg.model}`);
 	});
 
+	pi.on("model_select", (event, ctx) => {
+		currentModelFilter = event.model.id;
+		debug(`model_select model=${event.model.id}`);
+		const d = getDb();
+		if (d) updateStatusBar(d, ctx, Date.now());
+	});
+
 	pi.on("message_update", (event: MessageUpdateEvent) => {
 		const evtType = event.assistantMessageEvent.type;
 		pending = handleMessageUpdate(pending, evtType, Date.now());
 	});
 
-	pi.on("message_end", (event) => {
+	pi.on("message_end", (event, ctx) => {
 		const msg = event.message as Partial<AssistantMessage>;
 		const now = Date.now();
 		const result = handleMessageEnd(pending, msg, sessionId, now);
@@ -146,6 +173,7 @@ export default function (pi: ExtensionAPI) {
 				} catch (e) {
 					console.warn("[llm-perf] ERROR: DB write failed:", e);
 				}
+				updateStatusBar(d, ctx, now);
 			}
 		}
 	});

@@ -4,14 +4,25 @@ Personal collection of extensions and skills for [pi](https://github.com/ferolog
 
 > **Working note:** Use relative paths for file operations (e.g., `sandbox/index.ts`, `CLAUDE.md`). Avoid absolute paths like `~/projects/pi-my-stuff/...`.
 
+## API Reference — ALWAYS Check Before Using
+
+**Do NOT guess pi API method names, property names, or event shapes.** Look them up first:
+
+1. `vendor/pi-mono/packages/coding-agent/src/core/extensions/types.ts` — canonical type definitions for `ExtensionContext`, `ExtensionAPI`, events, etc.
+2. `vendor/pi-mono/packages/coding-agent/docs/extensions.md` — official extension docs
+3. `docs/extension-cookbook.md` — local patterns and examples
+
+Example: `ExtensionContext` has `ctx.model` (a property), NOT `ctx.getModel()` (which is on a different internal interface). Getting this wrong causes runtime errors.
+
 ## Structure
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, statusnote, llm-perf, slash-clear)
+├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claudemode, fetch, statusnote, llm-perf, slash-clear)
 ├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-my-browser/   # Browser automation extension
+├── claude-agent-sdk-pi/ # Claude Agent SDK provider (routes LLM calls through Claude Code)
 ├── pi-subagents/    # Subagent orchestration library
 ├── pi-plan/         # Planning agent
 ├── docs/            # Additional documentation
@@ -50,6 +61,20 @@ Spawn Claude Code as subprocess.
 AskClaude({ prompt: "Analyze this architecture...", model: "sonnet" })
 ```
 
+### claude-acp
+Bridge pi to Claude Code via ACP (Agent Communication Protocol). Sends messages to a running Claude Code instance and streams responses back.
+
+### claudemode
+Toggle mode that forwards all pi user messages to Claude Code via ACP, streaming responses back into pi's TUI.
+
+```bash
+/claudemode           # Toggle on/off
+/claudemode disconnect # Explicit disconnect
+```
+
+### fetch
+Fetch web pages and download files. Supports proxy auth via `~/.pi/agent/fetch.json`.
+
 ## Browser Automation
 
 ### pi-my-browser
@@ -80,6 +105,7 @@ Parallel web agent research using multiple search queries.
 - `pi-gondolin-landscape.md` — Research into pi-gondolin integrations
 - `pi-subagents-dev-notes.md` — Development notes for pi-subagents (tool registration gotchas)
 - `pi-tool-call-ux.md` — How to customize tool call display in the pi TUI
+- `extension-settings.md` — How to handle user-configurable settings in extensions
 
 ## Sandbox
 

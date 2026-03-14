@@ -70,6 +70,25 @@ export function computeModelStats(rows: LlmCallRow[]): ModelStats[] {
 	return stats.sort((a, b) => b.calls - a.calls);
 }
 
+export interface AggregateStats {
+	ttftP50: number | null;
+	tokPerSecP50: number | null;
+}
+
+export function computeAggregateStats(rows: LlmCallRow[]): AggregateStats {
+	const completed = rows.filter((r) => r.stop_reason !== "aborted");
+	const ttfts = completed.map((r) => r.ttft_ms).filter((v): v is number => v != null).sort((a, b) => a - b);
+	const tokPerSecValues = completed
+		.filter((r) => r.output_tokens != null && r.duration_ms != null && r.duration_ms > 0)
+		.map((r) => r.output_tokens! / (r.duration_ms! / 1000))
+		.sort((a, b) => a - b);
+
+	return {
+		ttftP50: ttfts.length > 0 ? percentile(ttfts, 0.5) : null,
+		tokPerSecP50: tokPerSecValues.length > 0 ? percentile(tokPerSecValues, 0.5) : null,
+	};
+}
+
 // ── Report formatting ──
 
 export interface TimeRangeStats {
@@ -84,13 +103,13 @@ function formatTokK(v: number | null): string {
 	return `${(v / 1000).toFixed(0)}k`;
 }
 
-function formatMs(ms: number | null): string {
+export function formatMs(ms: number | null): string {
 	if (ms == null) return "  —";
 	if (ms < 1000) return `${Math.round(ms)}ms`;
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatTokS(v: number | null): string {
+export function formatTokS(v: number | null): string {
 	if (v == null) return " —";
 	return v.toFixed(0);
 }

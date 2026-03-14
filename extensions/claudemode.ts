@@ -43,12 +43,22 @@ import { Box, Markdown, type MarkdownTheme, Text } from "@mariozechner/pi-tui";
 
 // --- Types ---
 
+interface ToolCallContentBlock {
+	type: string;
+	text?: string;
+	// Diff content
+	path?: string;
+	oldText?: string;
+	newText?: string;
+}
+
 interface ToolCallState {
 	name: string;
 	status: string;
 	rawInput?: unknown;
 	rawOutput?: unknown;
-	content?: Array<{ type: string; text?: string }>;
+	content?: ToolCallContentBlock[];
+	locations?: Array<{ path?: string; uri?: string }>;
 }
 
 interface TerminalState {
@@ -81,6 +91,7 @@ export default function (pi: ExtensionAPI) {
 	let responseText = "";
 	let thinkingText = "";
 	const toolCalls = new Map<string, ToolCallState>();
+	let planTasks: Array<{ title: string; status: string }> | null = null;
 
 	// Terminal management
 	let nextTerminalId = 1;
@@ -93,6 +104,7 @@ export default function (pi: ExtensionAPI) {
 		responseText = "";
 		thinkingText = "";
 		toolCalls.clear();
+		planTasks = null;
 	}
 
 	function updateFooter() {
@@ -110,10 +122,46 @@ export default function (pi: ExtensionAPI) {
 
 	function updateStreamWidget() {
 		if (!uiCtx) return;
-		const lines = responseText.split("\n");
-		// Show last ~20 lines to keep widget manageable
-		const visible = lines.length > 20 ? lines.slice(-20) : lines;
-		uiCtx.ui.setWidget(WIDGET_KEY, ["◉ Claude responding...", "", ...visible]);
+		const lines: string[] = ["◉ Claude responding..."];
+
+		// Show tool call activity
+		for (const [, tc] of toolCalls) {
+			const icon = tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "◉";
+			let line = `  ${icon} ${tc.name}`;
+			// Show file path from locations or rawInput
+			const path = tc.locations?.[0]?.path ?? extractPath(tc.rawInput);
+			if (path) line += ` ${path}`;
+			if (tc.status !== "completed" && tc.status !== "failed") line += ` [${tc.status}]`;
+			lines.push(line);
+		}
+
+		// Show plan tasks
+		if (planTasks) {
+			lines.push("");
+			for (const t of planTasks) {
+				const icon = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○";
+				lines.push(`  ${icon} ${t.title}`);
+			}
+		}
+
+		// Show tail of response text
+		if (responseText) {
+			lines.push("");
+			const respLines = responseText.split("\n");
+			const visible = respLines.length > 15 ? respLines.slice(-15) : respLines;
+			lines.push(...visible);
+		}
+
+		uiCtx.ui.setWidget(WIDGET_KEY, lines);
+	}
+
+	function extractPath(rawInput: unknown): string | undefined {
+		if (!rawInput || typeof rawInput !== "object") return undefined;
+		const input = rawInput as Record<string, unknown>;
+		if (typeof input.file_path === "string") return input.file_path;
+		if (typeof input.path === "string") return input.path;
+		if (typeof input.command === "string") return input.command.substring(0, 80);
+		return undefined;
 	}
 
 	function clearStreamWidget() {
@@ -150,24 +198,25 @@ export default function (pi: ExtensionAPI) {
 					status: tc.status ?? "pending",
 					rawInput: tc.rawInput,
 					rawOutput: tc.rawOutput,
-					content: tc.content as Array<{ type: string; text?: string }>,
+					content: tc.content as ToolCallContentBlock[] | undefined,
+					locations: tc.locations as Array<{ path?: string; uri?: string }> | undefined,
 				});
-				emitToolMessage(tc.toolCallId);
+				updateStreamWidget();
 				break;
 			}
 
 			case "tool_call_update": {
 				const tc = update as ToolCallUpdate & { sessionUpdate: string };
-				const id = tc.toolCallId;
-				const existing = toolCalls.get(id);
+				const existing = toolCalls.get(tc.toolCallId);
 				if (existing) {
 					if (tc.title) existing.name = tc.title;
 					if (tc.status) existing.status = tc.status;
 					if (tc.rawInput !== undefined) existing.rawInput = tc.rawInput;
 					if (tc.rawOutput !== undefined) existing.rawOutput = tc.rawOutput;
-					if (tc.content) existing.content = tc.content as Array<{ type: string; text?: string }>;
-					emitToolMessage(id);
+					if (tc.content) existing.content = tc.content as ToolCallContentBlock[] | undefined;
+					if (tc.locations) existing.locations = tc.locations as Array<{ path?: string; uri?: string }> | undefined;
 				}
+				updateStreamWidget();
 				break;
 			}
 
@@ -179,25 +228,9 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			case "plan": {
-				// Plans come as session updates — render as a response message
 				const plan = update as { tasks?: Array<{ title: string; status: string }> };
-				if (plan.tasks) {
-					const planText = plan.tasks
-						.map((t) => {
-							const icon = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○";
-							return `${icon} ${t.title}`;
-						})
-						.join("\n");
-					pi.sendMessage(
-						{
-							customType: MSG_RESPONSE,
-							content: `Plan:\n${planText}`,
-							display: true,
-							details: { isPlan: true },
-						},
-						{ triggerTurn: false },
-					);
-				}
+				if (plan.tasks) planTasks = plan.tasks;
+				updateStreamWidget();
 				break;
 			}
 
@@ -206,36 +239,80 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	function emitToolMessage(toolCallId: string) {
-		const tc = toolCalls.get(toolCallId);
-		if (!tc) return;
+	/** Format a completed tool call for the final persistent message. */
+	function formatToolContent(tc: ToolCallState): string {
+		const parts: string[] = [];
 
-		let content = `${tc.name} [${tc.status}]`;
-		if (tc.rawInput) {
-			const inputStr = typeof tc.rawInput === "string" ? tc.rawInput : JSON.stringify(tc.rawInput);
-			content += `\n  Input: ${inputStr.substring(0, 300)}`;
-		}
-		if (tc.rawOutput) {
-			const outputStr = typeof tc.rawOutput === "string" ? tc.rawOutput : JSON.stringify(tc.rawOutput);
-			content += `\n  Output: ${outputStr.substring(0, 500)}`;
-		}
+		// Show file path
+		const path = tc.locations?.[0]?.path ?? extractPath(tc.rawInput);
+		if (path) parts.push(path);
+
+		// Show diffs from content
 		if (tc.content) {
 			for (const block of tc.content) {
-				if (block.type === "text" && block.text) {
-					content += `\n  ${block.text.substring(0, 500)}`;
+				if (block.type === "diff" && block.path) {
+					parts.push(`--- ${block.path}`);
+					if (block.oldText != null && block.newText != null) {
+						parts.push(formatSimpleDiff(block.oldText, block.newText));
+					} else if (block.newText != null) {
+						parts.push(block.newText.substring(0, 1000));
+					}
+				} else if (block.type === "content" && block.text) {
+					parts.push(block.text.substring(0, 1000));
 				}
 			}
 		}
 
-		pi.sendMessage(
-			{
-				customType: MSG_TOOL,
-				content,
-				display: true,
-				details: { toolCallId, name: tc.name, status: tc.status },
-			},
-			{ triggerTurn: false },
-		);
+		// Fall back to rawInput/rawOutput if no structured content
+		if (parts.length === 0) {
+			if (tc.rawInput) {
+				const s = typeof tc.rawInput === "string" ? tc.rawInput : JSON.stringify(tc.rawInput, null, 2);
+				parts.push(s.substring(0, 500));
+			}
+			if (tc.rawOutput) {
+				const s = typeof tc.rawOutput === "string" ? tc.rawOutput : JSON.stringify(tc.rawOutput, null, 2);
+				parts.push(s.substring(0, 1000));
+			}
+		}
+
+		return parts.join("\n");
+	}
+
+	function formatSimpleDiff(oldText: string, newText: string): string {
+		const oldLines = oldText.split("\n");
+		const newLines = newText.split("\n");
+		const out: string[] = [];
+		const maxLines = 40;
+		let count = 0;
+		// Simple line-by-line: show removed then added
+		for (const line of oldLines) {
+			if (!newLines.includes(line)) {
+				out.push(`- ${line}`);
+				if (++count >= maxLines) { out.push("..."); return out.join("\n"); }
+			}
+		}
+		for (const line of newLines) {
+			if (!oldLines.includes(line)) {
+				out.push(`+ ${line}`);
+				if (++count >= maxLines) { out.push("..."); return out.join("\n"); }
+			}
+		}
+		return out.join("\n") || "(no changes)";
+	}
+
+	/** Emit final persistent messages for all tool calls accumulated during this turn. */
+	function emitFinalToolMessages() {
+		for (const [toolCallId, tc] of toolCalls) {
+			pi.sendMessage(
+				{
+					customType: MSG_TOOL,
+					content: formatToolContent(tc),
+					display: true,
+					details: { toolCallId, name: tc.name, status: tc.status },
+				},
+				{ triggerTurn: false },
+			);
+		}
 	}
 
 	function handleRequestPermission(params: RequestPermissionRequest): RequestPermissionResponse {
@@ -476,8 +553,21 @@ export default function (pi: ExtensionAPI) {
 				prompt: [{ type: "text", text }],
 			});
 
-			// Clear streaming widget and send final persistent response
+			// Clear streaming widget and emit final persistent messages
 			clearStreamWidget();
+			emitFinalToolMessages();
+			if (planTasks) {
+				const planText = planTasks
+					.map((t) => {
+						const icon = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○";
+						return `${icon} ${t.title}`;
+					})
+					.join("\n");
+				pi.sendMessage(
+					{ customType: MSG_RESPONSE, content: `Plan:\n${planText}`, display: true, details: { isPlan: true } },
+					{ triggerTurn: false },
+				);
+			}
 			if (responseText) {
 				pi.sendMessage(
 					{
@@ -587,10 +677,25 @@ export default function (pi: ExtensionAPI) {
 			: details?.status === "failed" ? theme.fg("error", "✗")
 			: theme.fg("warning", "◉");
 
-		let text = `${statusIcon} ${theme.fg("toolTitle", details?.name ?? "tool")} ${theme.fg("dim", `[${details?.status ?? "unknown"}]`)}`;
+		let text = `${statusIcon} ${theme.fg("toolTitle", details?.name ?? "tool")}`;
 
-		if (expanded) {
-			text += "\n" + theme.fg("muted", content);
+		// Show first line preview when collapsed
+		const firstLine = content.split("\n")[0] || "";
+		if (firstLine) text += ` ${theme.fg("muted", firstLine.substring(0, 120))}`;
+
+		if (expanded && content.includes("\n")) {
+			// Color diff lines
+			const body = content
+				.split("\n")
+				.slice(1)
+				.map((line) => {
+					if (line.startsWith("+ ")) return theme.fg("toolDiffAdded", line);
+					if (line.startsWith("- ")) return theme.fg("toolDiffRemoved", line);
+					if (line.startsWith("--- ")) return theme.fg("dim", line);
+					return theme.fg("muted", line);
+				})
+				.join("\n");
+			text += "\n" + body;
 		}
 
 		return new Text(text, 0, 0);

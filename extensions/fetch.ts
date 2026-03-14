@@ -1,4 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { keyHint } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -168,7 +170,7 @@ export default function (pi: ExtensionAPI) {
 
 				return {
 					content: [{ type: "text", text: content }],
-					details: {},
+					details: { content, truncated: max_length !== -1 && content.includes("truncated"), url },
 				};
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -186,6 +188,30 @@ export default function (pi: ExtensionAPI) {
 					fs.unlinkSync(tempFile);
 				}
 			}
+		},
+
+		renderResult(result, options, theme) {
+			const content = result.details?.content as string | undefined;
+			if (!content) {
+				// Fallback for binary files or errors - show raw content
+				const text = result.content?.[0]?.text || "No content";
+				return new Text(theme.fg("toolOutput", text), 0, 0);
+			}
+
+			const lines = content.split("\n");
+			const maxLines = options.expanded ? lines.length : 15;
+			const displayLines = lines.slice(0, maxLines);
+			const remaining = lines.length - maxLines;
+
+			let text = theme.fg("success", "✓ Fetched ") + theme.fg("accent", result.details?.url || "URL");
+			text += "\n\n" + displayLines.map((line) => theme.fg("toolOutput", line)).join("\n");
+
+			if (remaining > 0 || result.details?.truncated) {
+				const reason = result.details?.truncated ? " (truncated)" : "";
+				text += theme.fg("muted", `\n... (${remaining} more lines${reason}, ${keyHint("expandTools", "to expand")})`);
+			}
+
+			return new Text(text, 0, 0);
 		},
 	});
 }
