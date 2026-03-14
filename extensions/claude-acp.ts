@@ -89,6 +89,7 @@ export default function (pi: ExtensionAPI) {
 	let agentProcess: ChildProcess | null = null;
 	let prompting = false;
 	let currentMode: string | null = null;
+	let contextPct: number | null = null; // context window usage %
 
 	// Accumulated response state during a prompt turn
 	let responseText = "";
@@ -120,7 +121,12 @@ export default function (pi: ExtensionAPI) {
 		if (currentMode && currentMode !== "code") label += ` [${currentMode}]`;
 		const dot = prompting ? " ◉" : " ●";
 		const color = prompting ? "warning" : "success";
-		uiCtx.ui.setStatus("claude-acp", uiCtx.ui.theme.fg(color, label + dot));
+		let status = uiCtx.ui.theme.fg(color, label + dot);
+		if (contextPct != null) {
+			const pctColor = contextPct >= 80 ? "error" : "dim";
+			status += " " + uiCtx.ui.theme.fg(pctColor, `${contextPct}%`);
+		}
+		uiCtx.ui.setStatus("claude-acp", status);
 	}
 
 	function updateStreamWidget() {
@@ -234,6 +240,15 @@ export default function (pi: ExtensionAPI) {
 				const plan = update as { tasks?: Array<{ title: string; status: string }> };
 				if (plan.tasks) planTasks = plan.tasks;
 				updateStreamWidget();
+				break;
+			}
+
+			case "usage_update": {
+				const usage = update as { used?: number; size?: number };
+				if (usage.used != null && usage.size != null && usage.size > 0) {
+					contextPct = Math.round((usage.used / usage.size) * 100);
+					updateFooter();
+				}
 				break;
 			}
 
