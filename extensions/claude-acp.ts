@@ -8,7 +8,8 @@
  *   /claude:on    - Connect (resumes previous session)
  *   /claude:off   - Disconnect (preserves session)
  *   /claude:clear - Disconnect and forget session
- *   /claude:btw   - Quick one-shot question (display only, no context)
+ *   /claude:whisper - Quick one-shot question (display only, no context)
+ *   /claude:ask     - One-shot question (added to context)
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -748,7 +749,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("input", async (event, ctx) => {
 		// Clear any btw widget on new input
-		ctx.ui.setWidget(BTW_WIDGET, undefined);
+		ctx.ui.setWidget(WHISPER_WIDGET, undefined);
 
 		if (!active) return { action: "continue" as const };
 
@@ -767,9 +768,32 @@ export default function (pi: ExtensionAPI) {
 		return { action: "handled" as const };
 	});
 
+	// --- One-shot Claude helper ---
+
+	function runClaudeOneShot(prompt: string): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
+			const proc = spawn("claude", [
+				"-p",
+				"--allowed-tools", "Read,Glob,Grep,Bash(br),Bash(ls),Bash(find),WebSearch,WebFetch",
+			], {
+				cwd: process.cwd(),
+				stdio: ["pipe", "pipe", "pipe"],
+			});
+			let stdout = "";
+			proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
+			proc.on("close", (code) => {
+				if (code !== 0 && !stdout.trim()) reject(new Error(`claude exited ${code}`));
+				else resolve(stdout.trim());
+			});
+			proc.on("error", reject);
+			proc.stdin.write(prompt);
+			proc.stdin.end();
+		});
+	}
+
 	// --- Commands (registration order = display order) ---
 
-	const BTW_WIDGET = "claude-btw";
+	const WHISPER_WIDGET = "claude-whisper";
 
 	pi.registerCommand("claude:on", {
 		description: "Connect to Claude Code — resumes previous session if available",
@@ -816,43 +840,64 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("claude:btw", {
+	pi.registerCommand("claude:whisper", {
 		description: "Ask Claude a quick question (display only, not added to context)",
 		async handler(args, ctx) {
 			const prompt = args?.trim();
 			if (!prompt) {
-				ctx.ui.notify("Usage: /claude:btw <question>", "warning");
+				ctx.ui.notify("Usage: /claude:whisper <question>", "warning");
 				return;
 			}
-			ctx.ui.setWidget(BTW_WIDGET, ["◉ Asking Claude..."]);
+			ctx.ui.setWidget(WHISPER_WIDGET, ["◉ Asking Claude..."]);
 			try {
-				const result = await new Promise<string>((resolve, reject) => {
-					const proc = spawn("claude", [
-						"-p",
-						"--allowed-tools", "Read,Glob,Grep,Bash,WebSearch,WebFetch",
-					], {
-						cwd: process.cwd(),
-						stdio: ["pipe", "pipe", "pipe"],
-					});
-					let stdout = "";
-					proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
-					proc.on("close", (code) => {
-						if (code !== 0 && !stdout.trim()) reject(new Error(`claude exited ${code}`));
-						else resolve(stdout.trim());
-					});
-					proc.on("error", reject);
-					proc.stdin.write(prompt);
-					proc.stdin.end();
-				});
+				const result = await runClaudeOneShot(prompt);
 				const lines = result.split("\n");
-				ctx.ui.setWidget(BTW_WIDGET, [
-					ctx.ui.theme.fg("mdLink", "[claude:btw]") + " " + ctx.ui.theme.fg("dim", prompt),
+				ctx.ui.setWidget(WHISPER_WIDGET, [
+					ctx.ui.theme.fg("dim", "[whisper]") + " " + ctx.ui.theme.fg("dim", prompt),
 					"",
 					...lines,
 				]);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				ctx.ui.setWidget(BTW_WIDGET, [ctx.ui.theme.fg("error", `claude:btw failed: ${msg}`)]);
+				ctx.ui.setWidget(WHISPER_WIDGET, [ctx.ui.theme.fg("error", `whisper failed: ${msg}`)]);
+			}
+		},
+	});
+
+	pi.registerCommand("claude:ask", {
+		description: "Ask Claude a question (added to context)",
+		async handler(args, ctx) {
+			const prompt = args?.trim();
+			if (!prompt) {
+				ctx.ui.notify("Usage: /claude:ask <question>", "warning");
+				return;
+			}
+			ctx.ui.setWidget(WHISPER_WIDGET, ["◉ Asking Claude..."]);
+			try {
+				const result = await runClaudeOneShot(prompt);
+				ctx.ui.setWidget(WHISPER_WIDGET, undefined);
+				pi.sendMessage(
+					{
+						customType: MSG_USER,
+						content: `[You → Claude] ${prompt}`,
+						display: true,
+						details: {},
+					},
+					{ triggerTurn: false },
+				);
+				pi.sendMessage(
+					{
+						customType: MSG_RESPONSE,
+						content: `[Claude Code] ${result}`,
+						display: true,
+						details: {},
+					},
+					{ triggerTurn: false },
+				);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				ctx.ui.setWidget(WHISPER_WIDGET, undefined);
+				ctx.ui.notify(`claude:ask failed: ${msg}`, "error");
 			}
 		},
 	});
