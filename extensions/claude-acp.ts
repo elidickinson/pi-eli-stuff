@@ -42,6 +42,7 @@ import {
 	type ToolCall,
 } from "@agentclientprotocol/sdk";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import { Box, Markdown, type MarkdownTheme, Text } from "@mariozechner/pi-tui";
 
 // --- Types ---
@@ -748,7 +749,7 @@ export default function (pi: ExtensionAPI) {
 	// --- Input Interception ---
 
 	pi.on("input", async (event, ctx) => {
-		// Clear any btw widget on new input
+		// Clear any whisper/ask widget on new input
 		ctx.ui.setWidget(WHISPER_WIDGET, undefined);
 
 		if (!active) return { action: "continue" as const };
@@ -790,6 +791,67 @@ export default function (pi: ExtensionAPI) {
 			proc.stdin.end();
 		});
 	}
+
+	// --- Tool ---
+
+	pi.registerTool({
+		name: "AskClaude",
+		label: "Ask Claude Code",
+		description: "Delegate a question or task to Claude Code (Anthropic's coding agent). Each call is stateless. Use when: the user asks you to ask Claude, you need a second opinion on a complex problem, or a task would benefit from Claude's tools (codebase search, web search, browser). Prefer to solve straightforward tasks yourself.",
+		parameters: Type.Object({
+			prompt: Type.String({ description: "The question or task for Claude Code" }),
+		}),
+		renderResult(result, { expanded }, theme) {
+			const details = result.details as { prompt?: string; executionTime?: number } | undefined;
+			const responseText = result.content[0];
+			const firstLine = responseText?.type === "text" && responseText.text
+				? responseText.text.split("\n")[0]
+				: null;
+
+			let text = result.details && (result.details as any).error
+				? theme.fg("error", "✗ Claude Code error")
+				: theme.fg("success", "✓ Claude Code");
+
+			if (!expanded) {
+				if (firstLine) {
+					text += ` ${theme.fg("muted", firstLine.substring(0, 120))}${firstLine.length > 120 ? "..." : ""}`;
+				}
+				return new Text(text, 0, 0);
+			}
+
+			if (details?.prompt) text += `\n${theme.fg("dim", `Prompt: ${details.prompt}`)}`;
+			if (details?.executionTime) text += `\n${theme.fg("dim", `Time: ${(details.executionTime / 1000).toFixed(1)}s`)}`;
+			if (responseText?.type === "text" && responseText.text) {
+				text += `\n\n${theme.fg("muted", "─".repeat(40))}\n${responseText.text}`;
+			}
+			return new Text(text, 0, 0);
+		},
+		async execute(_id, params) {
+			const start = Date.now();
+			try {
+				const result = await runClaudeOneShot(params.prompt);
+				const executionTime = Date.now() - start;
+				pi.sendMessage(
+					{ customType: MSG_USER, content: `[You → Claude Code] ${params.prompt}`, display: true, details: {} },
+					{ triggerTurn: false },
+				);
+				pi.sendMessage(
+					{ customType: MSG_RESPONSE, content: `[Claude Code] ${result}`, display: true, details: {} },
+					{ triggerTurn: false },
+				);
+				return {
+					content: [{ type: "text" as const, text: result }],
+					details: { prompt: params.prompt, executionTime },
+				};
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				return {
+					content: [{ type: "text" as const, text: `Error: ${msg}` }],
+					details: { prompt: params.prompt, executionTime: Date.now() - start, error: true },
+				};
+			}
+		},
+	});
 
 	// --- Commands (registration order = display order) ---
 
@@ -879,7 +941,7 @@ export default function (pi: ExtensionAPI) {
 				pi.sendMessage(
 					{
 						customType: MSG_USER,
-						content: `[You → Claude] ${prompt}`,
+						content: `[You → Claude Code] ${prompt}`,
 						display: true,
 						details: {},
 					},
