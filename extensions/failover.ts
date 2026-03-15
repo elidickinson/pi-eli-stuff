@@ -2,25 +2,17 @@
  * API Key Failover Extension
  *
  * Rotates to a backup API key when rate-limited, so pi's built-in
- * auto-retry uses the fresh key. Config: ~/.pi/agent/failover.json
+ * auto-retry uses the fresh key. Zero config — just set env vars:
  *
- * Keys are the primary env var name you already use. Values list
- * backup env var names to rotate through:
+ *   ANTHROPIC_API_KEY=sk-ant-xxx
+ *   ANTHROPIC_API_KEY_2=sk-ant-yyy
+ *   ANTHROPIC_API_KEY_3=sk-ant-zzz
  *
- * {
- *   "ANTHROPIC_API_KEY": ["ANTHROPIC_API_KEY_2", "ANTHROPIC_API_KEY_3"],
- *   "OPENAI_API_KEY": ["OPENAI_API_KEY_2"]
- * }
+ * Auto-discovers _2, _3, ... suffixes for any known provider key.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
-// Config: primary env var → list of backup env var names
-type FailoverConfig = Record<string, string[]>;
 
 const RATE_LIMIT_RE =
 	/overloaded|rate.?limit|too many requests|429|502|503|504|service.?unavailable/i;
@@ -37,55 +29,42 @@ const PROVIDER_ENV: Record<string, string> = {
 	mistral: "MISTRAL_API_KEY",
 };
 
-function loadConfig(): FailoverConfig {
-	const path = join(getAgentDir(), "failover.json");
-	try {
-		return JSON.parse(readFileSync(path, "utf-8"));
-	} catch {
-		return {};
+/** Snapshot key values from FOO_KEY, FOO_KEY_2, FOO_KEY_3, ... */
+function discoverKeys(envVar: string): string[] {
+	const keys: string[] = [];
+	const primary = process.env[envVar];
+	if (!primary) return keys;
+	keys.push(primary);
+	for (let i = 2; ; i++) {
+		const val = process.env[`${envVar}_${i}`];
+		if (!val) break;
+		keys.push(val);
 	}
+	return keys;
 }
 
 export default function (pi: ExtensionAPI) {
-	const config = loadConfig();
-
-	// Build reverse map: provider name → primary env var
-	const envToProvider = new Map<string, string>();
-	for (const [provider, envVar] of Object.entries(PROVIDER_ENV)) {
-		envToProvider.set(envVar, provider);
-	}
-
 	// Snapshot all key values at startup (before any swaps mutate process.env)
-	// and track current index (0 = primary)
 	const resolvedKeys = new Map<string, string[]>();
 	const keyIndex = new Map<string, number>();
-	for (const [primaryEnv, backups] of Object.entries(config)) {
-		if (!backups.length) continue;
-		const values = [primaryEnv, ...backups]
-			.map((name) => process.env[name])
-			.filter((v): v is string => !!v);
-		if (values.length < 2) continue;
-		resolvedKeys.set(primaryEnv, values);
-		keyIndex.set(primaryEnv, 0);
-	}
-
-	// provider name → primary env var (for looking up on rate limit)
 	const providerToEnv = new Map<string, string>();
-	for (const primaryEnv of resolvedKeys.keys()) {
-		const provider = envToProvider.get(primaryEnv);
-		if (provider) providerToEnv.set(provider, primaryEnv);
-	}
 
-	function displayName(primaryEnv: string): string {
-		return envToProvider.get(primaryEnv) ?? primaryEnv;
+	for (const [provider, envVar] of Object.entries(PROVIDER_ENV)) {
+		const keys = discoverKeys(envVar);
+		if (keys.length < 2) continue;
+		resolvedKeys.set(envVar, keys);
+		keyIndex.set(envVar, 0);
+		providerToEnv.set(provider, envVar);
 	}
 
 	function updateStatus(ctx: { ui: { setStatus(k: string, t: string | undefined): void; theme: any } }) {
 		const parts: string[] = [];
-		for (const [primaryEnv, idx] of keyIndex) {
-			const keys = resolvedKeys.get(primaryEnv)!;
+		for (const [envVar, idx] of keyIndex) {
+			const keys = resolvedKeys.get(envVar)!;
 			if (idx === 0) continue;
-			parts.push(`${displayName(primaryEnv)} ${idx + 1}/${keys.length}`);
+			// Find provider name for display
+			const provider = Object.entries(PROVIDER_ENV).find(([, v]) => v === envVar)?.[0] ?? envVar;
+			parts.push(`${provider} ${idx + 1}/${keys.length}`);
 		}
 		ctx.ui.setStatus(
 			"failover",
@@ -101,20 +80,19 @@ export default function (pi: ExtensionAPI) {
 		const provider = msg.provider as string | undefined;
 		if (!provider) return;
 
-		const primaryEnv = providerToEnv.get(provider);
-		if (!primaryEnv) return;
+		const envVar = providerToEnv.get(provider);
+		if (!envVar) return;
 
-		const keys = resolvedKeys.get(primaryEnv)!;
-		const current = keyIndex.get(primaryEnv) ?? 0;
+		const keys = resolvedKeys.get(envVar)!;
+		const current = keyIndex.get(envVar) ?? 0;
 		const next = (current + 1) % keys.length;
-		keyIndex.set(primaryEnv, next);
+		keyIndex.set(envVar, next);
 
 		// Swap the env var so getEnvApiKey() picks up the new key on retry
-		process.env[primaryEnv] = keys[next];
+		process.env[envVar] = keys[next];
 
-		const name = displayName(primaryEnv);
-		ctx.ui.setStatus("failover", ctx.ui.theme.fg("dim", `[${name} ${next + 1}/${keys.length}]`));
-		ctx.ui.notify(`Failover: ${name} → key ${next + 1}/${keys.length}`, "info");
+		ctx.ui.setStatus("failover", ctx.ui.theme.fg("dim", `[${provider} ${next + 1}/${keys.length}]`));
+		ctx.ui.notify(`Failover: ${provider} → key ${next + 1}/${keys.length}`, "info");
 	});
 
 	pi.on("session_start", (_e, ctx) => updateStatus(ctx));

@@ -80,6 +80,7 @@ const MSG_TOOL = "claude-acp-tool";
 const MSG_STATUS = "claude-acp-status";
 const ENTRY_TYPE = "claude-acp-state";
 const WIDGET_KEY = "claude-acp-stream";
+const WHISPER_WIDGET = "claude-whisper";
 
 // --- Extension ---
 
@@ -92,6 +93,7 @@ export default function (pi: ExtensionAPI) {
 	let prompting = false;
 	let currentMode: string | null = null;
 	let contextPct: number | null = null; // context window usage %
+	let streamWidgetKey = WIDGET_KEY; // which widget streams render into
 
 	// Accumulated response state during a prompt turn
 	let responseText = "";
@@ -163,7 +165,7 @@ export default function (pi: ExtensionAPI) {
 			lines.push(...visible);
 		}
 
-		uiCtx.ui.setWidget(WIDGET_KEY, lines);
+		uiCtx.ui.setWidget(streamWidgetKey, lines);
 	}
 
 	function extractPath(rawInput: unknown): string | undefined {
@@ -176,7 +178,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function clearStreamWidget() {
-		uiCtx?.ui.setWidget(WIDGET_KEY, undefined);
+		uiCtx?.ui.setWidget(streamWidgetKey, undefined);
 	}
 
 	// --- ACP Client Callbacks ---
@@ -318,21 +320,6 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 		return out.join("\n") || "(no changes)";
-	}
-
-	/** Emit final persistent messages for all tool calls accumulated during this turn. */
-	function emitFinalToolMessages() {
-		for (const [toolCallId, tc] of toolCalls) {
-			pi.sendMessage(
-				{
-					customType: MSG_TOOL,
-					content: formatToolContent(tc),
-					display: true,
-					details: { toolCallId, name: tc.name, status: tc.status },
-				},
-				{ triggerTurn: false },
-			);
-		}
 	}
 
 	function handleRequestPermission(params: RequestPermissionRequest): RequestPermissionResponse {
@@ -566,9 +553,54 @@ export default function (pi: ExtensionAPI) {
 		updateFooter();
 	}
 
-	async function handlePrompt(text: string): Promise<void> {
-		if (!connection || !sessionId) return;
+	async function ensureConnection(ctx: ExtensionContext): Promise<void> {
+		uiCtx = ctx;
+		if (active) return;
+		await connect(ctx, lastSessionId);
+	}
 
+	interface PromptResult {
+		responseText: string;
+		thinkingText: string;
+		toolCalls: Map<string, ToolCallState>;
+		planTasks: Array<{ title: string; status: string }> | null;
+		stopReason?: string;
+	}
+
+	async function promptClaude(text: string, widgetKey: string): Promise<PromptResult> {
+		if (!connection || !sessionId) throw new Error("Not connected");
+
+		streamWidgetKey = widgetKey;
+		resetStreamState();
+		prompting = true;
+		updateFooter();
+		uiCtx?.ui.setWidget(widgetKey, ["◉ Asking Claude..."]);
+
+		try {
+			const result = await connection.prompt({
+				sessionId,
+				prompt: [{ type: "text", text }],
+			});
+
+			clearStreamWidget();
+			return {
+				responseText,
+				thinkingText,
+				toolCalls: new Map(toolCalls),
+				planTasks: planTasks ? [...planTasks] : null,
+				stopReason: result.stopReason,
+			};
+		} catch (err) {
+			clearStreamWidget();
+			throw err;
+		} finally {
+			streamWidgetKey = WIDGET_KEY;
+			prompting = false;
+			updateFooter();
+		}
+	}
+
+	async function handlePrompt(text: string): Promise<void> {
 		// Echo the user's message so it's visible in history
 		pi.sendMessage(
 			{
@@ -580,22 +612,23 @@ export default function (pi: ExtensionAPI) {
 			{ triggerTurn: false },
 		);
 
-		resetStreamState();
-		prompting = true;
-		updateFooter();
-		uiCtx?.ui.setWidget(WIDGET_KEY, ["◉ Waiting for Claude Code..."]);
-
 		try {
-			const result = await connection.prompt({
-				sessionId,
-				prompt: [{ type: "text", text }],
-			});
+			const result = await promptClaude(text, WIDGET_KEY);
 
-			// Clear streaming widget and emit final persistent messages
-			clearStreamWidget();
-			emitFinalToolMessages();
-			if (planTasks) {
-				const planText = planTasks
+			// Emit final persistent messages
+			for (const [toolCallId, tc] of result.toolCalls) {
+				pi.sendMessage(
+					{
+						customType: MSG_TOOL,
+						content: formatToolContent(tc),
+						display: true,
+						details: { toolCallId, name: tc.name, status: tc.status },
+					},
+					{ triggerTurn: false },
+				);
+			}
+			if (result.planTasks) {
+				const planText = result.planTasks
 					.map((t) => {
 						const icon = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○";
 						return `${icon} ${t.title}`;
@@ -606,14 +639,14 @@ export default function (pi: ExtensionAPI) {
 					{ triggerTurn: false },
 				);
 			}
-			if (responseText) {
+			if (result.responseText) {
 				pi.sendMessage(
 					{
 						customType: MSG_RESPONSE,
-						content: `[Claude Code] ${responseText}`,
+						content: `[Claude Code] ${result.responseText}`,
 						display: true,
 						details: {
-							thinking: thinkingText,
+							thinking: result.thinkingText,
 							stopReason: result.stopReason,
 						},
 					},
@@ -621,7 +654,6 @@ export default function (pi: ExtensionAPI) {
 				);
 			}
 		} catch (err) {
-			clearStreamWidget();
 			const msg = err instanceof Error ? err.message : String(err);
 			pi.sendMessage(
 				{
@@ -632,9 +664,6 @@ export default function (pi: ExtensionAPI) {
 				},
 				{ triggerTurn: false },
 			);
-		} finally {
-			prompting = false;
-			updateFooter();
 		}
 	}
 
@@ -769,35 +798,12 @@ export default function (pi: ExtensionAPI) {
 		return { action: "handled" as const };
 	});
 
-	// --- One-shot Claude helper ---
-
-	function runClaudeOneShot(prompt: string): Promise<string> {
-		return new Promise<string>((resolve, reject) => {
-			const proc = spawn("claude", [
-				"-p",
-				"--allowed-tools", "Read,Glob,Grep,Bash(br),Bash(ls),Bash(find),WebSearch,WebFetch",
-			], {
-				cwd: process.cwd(),
-				stdio: ["pipe", "pipe", "pipe"],
-			});
-			let stdout = "";
-			proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk; });
-			proc.on("close", (code) => {
-				if (code !== 0 && !stdout.trim()) reject(new Error(`claude exited ${code}`));
-				else resolve(stdout.trim());
-			});
-			proc.on("error", reject);
-			proc.stdin.write(prompt);
-			proc.stdin.end();
-		});
-	}
-
 	// --- Tool ---
 
 	pi.registerTool({
 		name: "AskClaude",
 		label: "Ask Claude Code",
-		description: "Delegate a question or task to Claude Code (Anthropic's coding agent). Each call is stateless. Use when: the user asks you to ask Claude, you need a second opinion on a complex problem, or a task would benefit from Claude's tools (codebase search, web search, browser). Prefer to solve straightforward tasks yourself.",
+		description: "Delegate a question or task to Claude Code (Anthropic's coding agent). Shares the same Claude Code session as /claude:on. Use when: the user asks you to ask Claude, you need a second opinion on a complex problem, or a task would benefit from Claude's tools (codebase search, web search, browser). Prefer to solve straightforward tasks yourself.",
 		parameters: Type.Object({
 			prompt: Type.String({ description: "The question or task for Claude Code" }),
 		}),
@@ -826,21 +832,22 @@ export default function (pi: ExtensionAPI) {
 			}
 			return new Text(text, 0, 0);
 		},
-		async execute(_id, params) {
+		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const start = Date.now();
 			try {
-				const result = await runClaudeOneShot(params.prompt);
+				await ensureConnection(ctx);
+				const result = await promptClaude(params.prompt, WHISPER_WIDGET);
 				const executionTime = Date.now() - start;
 				pi.sendMessage(
 					{ customType: MSG_USER, content: `[You → Claude Code] ${params.prompt}`, display: true, details: {} },
 					{ triggerTurn: false },
 				);
 				pi.sendMessage(
-					{ customType: MSG_RESPONSE, content: `[Claude Code] ${result}`, display: true, details: {} },
+					{ customType: MSG_RESPONSE, content: `[Claude Code] ${result.responseText}`, display: true, details: {} },
 					{ triggerTurn: false },
 				);
 				return {
-					content: [{ type: "text" as const, text: result }],
+					content: [{ type: "text" as const, text: result.responseText }],
 					details: { prompt: params.prompt, executionTime },
 				};
 			} catch (err) {
@@ -854,8 +861,6 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// --- Commands (registration order = display order) ---
-
-	const WHISPER_WIDGET = "claude-whisper";
 
 	pi.registerCommand("claude:on", {
 		description: "Connect to Claude Code — resumes previous session if available",
@@ -910,10 +915,10 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("Usage: /claude:whisper <question>", "warning");
 				return;
 			}
-			ctx.ui.setWidget(WHISPER_WIDGET, ["◉ Asking Claude..."]);
 			try {
-				const result = await runClaudeOneShot(prompt);
-				const lines = result.split("\n");
+				await ensureConnection(ctx);
+				const result = await promptClaude(prompt, WHISPER_WIDGET);
+				const lines = result.responseText.split("\n");
 				ctx.ui.setWidget(WHISPER_WIDGET, [
 					ctx.ui.theme.fg("dim", "[whisper]") + " " + ctx.ui.theme.fg("dim", prompt),
 					"",
@@ -934,10 +939,9 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("Usage: /claude:ask <question>", "warning");
 				return;
 			}
-			ctx.ui.setWidget(WHISPER_WIDGET, ["◉ Asking Claude..."]);
 			try {
-				const result = await runClaudeOneShot(prompt);
-				ctx.ui.setWidget(WHISPER_WIDGET, undefined);
+				await ensureConnection(ctx);
+				const result = await promptClaude(prompt, WHISPER_WIDGET);
 				pi.sendMessage(
 					{
 						customType: MSG_USER,
@@ -950,7 +954,7 @@ export default function (pi: ExtensionAPI) {
 				pi.sendMessage(
 					{
 						customType: MSG_RESPONSE,
-						content: `[Claude Code] ${result}`,
+						content: `[Claude Code] ${result.responseText}`,
 						display: true,
 						details: {},
 					},
@@ -958,7 +962,6 @@ export default function (pi: ExtensionAPI) {
 				);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				ctx.ui.setWidget(WHISPER_WIDGET, undefined);
 				ctx.ui.notify(`claude:ask failed: ${msg}`, "error");
 			}
 		},
