@@ -67,6 +67,7 @@ cd sandbox && ./build.sh
 | `llm-perf/` | Passive LLM metrics tracking (TTFT, latency, throughput, cost) |
 | `statusnote.ts` | `/status` command — persistent footer note |
 | `slash-clear.ts` | `/clear` command (alias for `/new`) |
+| `failover.ts` | Auto-rotate API keys on rate limit (config: `~/.pi/agent/failover.json`) |
 
 ## Skills
 

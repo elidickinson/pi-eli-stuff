@@ -18,7 +18,7 @@ Example: `ExtensionContext` has `ctx.model` (a property), NOT `ctx.getModel()` (
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claude-acpx, fetch, statusnote, llm-perf, slash-clear)
+├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claude-acpx, fetch, statusnote, llm-perf, slash-clear, failover)
 ├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-my-browser/   # Browser automation extension
@@ -68,7 +68,8 @@ Interactive Claude Code mode via ACP. Forwards all user messages to Claude Code 
 /claude:on    # Connect (resumes previous session)
 /claude:off   # Disconnect (preserves session)
 /claude:clear # Disconnect and start fresh
-/claude:btw   # Quick one-shot question (display only, no context)
+/claude:whisper # Quick one-shot question (display only, no context)
+/claude:ask    # One-shot question (added to context)
 /pi <msg>     # Send a message to Pi's LLM while connected
 ```
 
