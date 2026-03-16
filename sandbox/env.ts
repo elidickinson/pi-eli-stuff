@@ -17,6 +17,12 @@ export function buildVmEnv(): Record<string, string> {
 
   for (const key of PI_ENV_KEYS) {
     if (process.env[key]) env[key] = process.env[key]!;
+
+    // Also check for numbered fallbacks (e.g., ZAI_API_KEY_2, ZAI_API_KEY_3)
+    for (let i = 2; i <= 9; i++) {
+      const fallbackKey = `${key}_${i}`;
+      if (process.env[fallbackKey]) env[fallbackKey] = process.env[fallbackKey]!;
+    }
   }
 
   // GONDOLIN_ENV_FOO=bar on the host becomes FOO=bar in the guest
