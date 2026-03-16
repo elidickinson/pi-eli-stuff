@@ -85,7 +85,8 @@ const WHISPER_WIDGET = "claude-whisper";
 // --- Extension ---
 
 export default function (pi: ExtensionAPI) {
-	let active = false;
+	let active = false; // Interactive mode: intercept user messages
+	let connected = false; // Connection state: connected to Claude Code
 	let connection: ClientSideConnection | null = null;
 	let sessionId: string | null = null;
 	let lastSessionId: string | null = null; // for resume after disconnect
@@ -437,7 +438,7 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Connection lifecycle ---
 
-	async function connect(ctx: ExtensionContext, resumeId?: string | null): Promise<void> {
+	async function connect(ctx: ExtensionContext, resumeId?: string | null, interactive: boolean = true): Promise<void> {
 		uiCtx = ctx;
 
 		const child = spawn("npx", ["-y", "@zed-industries/claude-agent-acp"], {
@@ -451,8 +452,9 @@ export default function (pi: ExtensionAPI) {
 		});
 
 		child.on("close", () => {
-			if (active) {
+			if (active || connected) {
 				active = false;
+				connected = false;
 				connection = null;
 				sessionId = null;
 				agentProcess = null;
@@ -518,24 +520,27 @@ export default function (pi: ExtensionAPI) {
 		// Set bypassPermissions so Claude Code's built-in tools (Bash, WebSearch, etc.) work
 		await connection.setSessionMode({ sessionId, modeId: "bypassPermissions" });
 
-		active = true;
+		active = interactive; // Only activate input interception for interactive mode
+		connected = true; // Always mark as connected
 		lastSessionId = sessionId;
-		updateFooter();
-
-		const label = resumed ? "Resumed" : "Connected to";
-		pi.sendMessage(
-			{
-				customType: MSG_STATUS,
-				content: `${label} Claude Code (${initResult.agentInfo?.name ?? "agent"})`,
-				display: true,
-				details: {},
-			},
-			{ triggerTurn: false },
-		);
+		if (interactive) {
+			updateFooter();
+			const label = resumed ? "Resumed" : "Connected to";
+			pi.sendMessage(
+				{
+					customType: MSG_STATUS,
+					content: `${label} Claude Code (${initResult.agentInfo?.name ?? "agent"})`,
+					display: true,
+					details: {},
+				},
+				{ triggerTurn: false },
+			);
+		}
 	}
 
 	function disconnect() {
 		active = false;
+		connected = false;
 		lastSessionId = sessionId;
 		if (agentProcess) {
 			agentProcess.kill();
@@ -553,10 +558,20 @@ export default function (pi: ExtensionAPI) {
 		updateFooter();
 	}
 
-	async function ensureConnection(ctx: ExtensionContext): Promise<void> {
+	async function ensureConnection(ctx: ExtensionContext, interactive: boolean = false): Promise<void> {
 		uiCtx = ctx;
-		if (active) return;
-		await connect(ctx, lastSessionId);
+		if (connected) {
+			// Already connected. Upgrade to interactive if needed.
+			if (interactive && !active) {
+				active = true;
+				updateFooter();
+				pi.appendEntry(ENTRY_TYPE, { active: true, connected: true, sessionId: lastSessionId });
+			}
+			return;
+		}
+		// Not connected. Establish connection.
+		await connect(ctx, lastSessionId, interactive);
+		pi.appendEntry(ENTRY_TYPE, { active: interactive, connected: true, sessionId: lastSessionId });
 	}
 
 	interface PromptResult {
@@ -803,10 +818,16 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "AskClaude",
 		label: "Ask Claude Code",
-		description: "Delegate a question or task to Claude Code (Anthropic's coding agent). Shares the same Claude Code session as /claude:on. Use when: the user asks you to ask Claude, you need a second opinion on a complex problem, or a task would benefit from Claude's tools (codebase search, web search, browser). Prefer to solve straightforward tasks yourself.",
+		description: "Delegate a question or task to Claude Code (Anthropic's coding agent). Share persistent context with Claude Code but do NOT switch to Claude mode (user input continues to go to pi's LLM). Use when: the user asks you to ask Claude, you need a second opinion on a complex problem, or a task would benefit from Claude's tools (codebase search, web search, browser). Prefer to solve straightforward tasks yourself.",
 		parameters: Type.Object({
 			prompt: Type.String({ description: "The question or task for Claude Code" }),
 		}),
+		renderCall(args, theme) {
+			let text = theme.fg("toolTitle", theme.bold("AskClaude "));
+			const preview = args.prompt.length > 200 ? args.prompt.substring(0, 200) + "..." : args.prompt;
+			text += theme.fg("muted", `"${preview}"`);
+			return new Text(text, 0, 0);
+		},
 		renderResult(result, { expanded }, theme) {
 			const details = result.details as { prompt?: string; executionTime?: number } | undefined;
 			const responseText = result.content[0];
@@ -835,7 +856,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const start = Date.now();
 			try {
-				await ensureConnection(ctx);
+				await ensureConnection(ctx, false); // Non-interactive: don't activate input interception
 				const result = await promptClaude(params.prompt, WHISPER_WIDGET);
 				const executionTime = Date.now() - start;
 				pi.sendMessage(
@@ -872,9 +893,8 @@ export default function (pi: ExtensionAPI) {
 			}
 			ctx.ui.notify("Connecting to Claude Code...", "info");
 			try {
-				await connect(ctx, lastSessionId);
+				await ensureConnection(ctx, true); // Interactive mode: activate input interception
 				ctx.ui.notify("Claude Code connected", "info");
-				pi.appendEntry(ENTRY_TYPE, { active: true, sessionId: lastSessionId });
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				ctx.ui.notify(`Failed to connect: ${msg}`, "error");
@@ -886,13 +906,13 @@ export default function (pi: ExtensionAPI) {
 		description: "Disconnect from Claude Code (session is preserved for resume)",
 		async handler(_args, ctx) {
 			uiCtx = ctx;
-			if (!active) {
+			if (!active && !connected) {
 				ctx.ui.notify("Claude Code not connected", "info");
 				return;
 			}
 			disconnect();
 			ctx.ui.notify("Claude Code disconnected", "info");
-			pi.appendEntry(ENTRY_TYPE, { active: false, sessionId: lastSessionId });
+			pi.appendEntry(ENTRY_TYPE, { active: false, connected: false, sessionId: lastSessionId });
 		},
 	});
 
@@ -903,7 +923,7 @@ export default function (pi: ExtensionAPI) {
 			if (active) disconnect();
 			lastSessionId = null;
 			ctx.ui.notify("Claude Code session cleared", "info");
-			pi.appendEntry(ENTRY_TYPE, { active: false, sessionId: null });
+			pi.appendEntry(ENTRY_TYPE, { active: false, connected: false, sessionId: null });
 		},
 	});
 
@@ -916,7 +936,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			try {
-				await ensureConnection(ctx);
+				await ensureConnection(ctx, false); // Non-interactive: don't activate input interception
 				const result = await promptClaude(prompt, WHISPER_WIDGET);
 				const lines = result.responseText.split("\n");
 				ctx.ui.setWidget(WHISPER_WIDGET, [
@@ -940,7 +960,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			try {
-				await ensureConnection(ctx);
+				await ensureConnection(ctx, false); // Non-interactive: don't activate input interception
 				const result = await promptClaude(prompt, WHISPER_WIDGET);
 				pi.sendMessage(
 					{
@@ -983,9 +1003,20 @@ export default function (pi: ExtensionAPI) {
 		// Don't auto-reconnect, just restore footer and session state
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === ENTRY_TYPE) {
-				const data = entry.data as { active?: boolean; sessionId?: string | null } | undefined;
+				const data = entry.data as {
+					active?: boolean;
+					connected?: boolean;
+					sessionId?: string | null
+				} | undefined;
 				if (data?.sessionId !== undefined) lastSessionId = data.sessionId;
-				if (data?.active && !active) {
+				if (data?.connected && !connected && !active) {
+					// Was connected passively (via tool or /claude:ask), show prompt to reconnect
+					ctx.ui.setStatus(
+						"claude-acp",
+						ctx.ui.theme.fg("dim", "Claude Code ○ (session available)"),
+					);
+				} else if (data?.active && !active) {
+					// Was in interactive mode, show prompt to reconnect
 					ctx.ui.setStatus(
 						"claude-acp",
 						ctx.ui.theme.fg("dim", "Claude Code ○ (run /claude:on to reconnect)"),
