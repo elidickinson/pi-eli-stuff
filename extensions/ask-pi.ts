@@ -102,7 +102,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "AskPi",
     label: "Ask Pi",
-    description: "Send a prompt to pi and return the response. Only makes sense to call as a background agent and/or with a different model. Access level: 'none' (no tools), 'read' (read-only tools: grep/find/ls), 'all' (full access). Defaults to 'read'.",
+    description: "Send a prompt to pi and return the response. Only makes sense to call as a background agent and/or with a different model. Not for use with Claude.",
     parameters: Type.Object({
       prompt: Type.String({ description: "The prompt to send" }),
       model: Type.Optional(Type.String({
@@ -112,7 +112,7 @@ export default function (pi: ExtensionAPI) {
         Type.Literal("none"),
         Type.Literal("read"),
         Type.Literal("all"),
-      ])),
+      ], { description: "Access level: 'none' (no tools), 'read' (read-only tools: grep/find/ls), 'all' (full access). Defaults to 'read'." })),
     }),
     renderCall(args, theme) {
       let text = theme.fg("toolTitle", theme.bold("AskPi "));
