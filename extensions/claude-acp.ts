@@ -859,10 +859,7 @@ export default function (pi: ExtensionAPI) {
 				await ensureConnection(ctx, false); // Non-interactive: don't activate input interception
 				const result = await promptClaude(params.prompt, WHISPER_WIDGET);
 				const executionTime = Date.now() - start;
-				pi.sendMessage(
-					{ customType: MSG_USER, content: `[You → Claude Code] ${params.prompt}`, display: true, details: {} },
-					{ triggerTurn: false },
-				);
+				// Show response as a visible message (no prompt echo — that caused LLM retry loops)
 				pi.sendMessage(
 					{ customType: MSG_RESPONSE, content: `[Claude Code] ${result.responseText}`, display: true, details: {} },
 					{ triggerTurn: false },
