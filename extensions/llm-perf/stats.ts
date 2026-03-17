@@ -150,10 +150,10 @@ export function formatReportHorizontal(ranges: TimeRangeStats[], theme: any): st
 	});
 
 	// Column structure:
-	// Model (24 chars) | Section (24 chars) | Section (24 chars) | Section (24 chars)
+	// Model (32 chars) | Section (24 chars) | Section (24 chars) | Section (24 chars)
 	// Section: space + "Last Hour" (9) + space + Calls + space + TTFT + space + Dur
 	// Or just: space + "Last Hour" (9) + space + "Calls  TTFT   Dur"
-	const modelW = 24;
+	const modelW = 32;
 	const colW = 5;
 
 	// Build output
@@ -218,12 +218,20 @@ export function formatReportHorizontal(ranges: TimeRangeStats[], theme: any): st
 		const isRangeHeader = i === 1;
 		const isSeparator = line.includes("────");
 		const isColumnHeader = i === 3;
+		const isDataRow = i > 3 && !isSeparator;
+		const zebraIndex = i - 4; // data rows start at index 4
+		const isZebra = isDataRow && zebraIndex % 2 === 0;
+
 		if (isTitle) {
 			result += theme.fg("accent", line);
 		} else if (isRangeHeader) {
 			result += theme.bold(line);
 		} else if (isColumnHeader || isSeparator) {
 			result += theme.fg("dim", line);
+		} else if (isZebra) {
+			// Zebra striping - alternate rows with subtle background
+			const colored = line.split("│").join(theme.fg("dim", "│"));
+			result += theme.bg("userMessageBg", colored);
 		} else {
 			// Data/total rows - dim the │ pipes
 			result += line.split("│").join(theme.fg("dim", "│"));
