@@ -136,37 +136,59 @@ export default function (pi: ExtensionAPI) {
 
 	function updateStreamWidget() {
 		if (!uiCtx) return;
-		const lines: string[] = ["◉ Claude responding..."];
+		const box = new Box(0, 0);
+
+		const mdTheme: MarkdownTheme = {
+			heading: (t) => uiCtx!.ui.theme.bold(uiCtx!.ui.theme.fg("mdHeading", t)),
+			link: (t) => uiCtx!.ui.theme.fg("mdLink", t),
+			linkUrl: (t) => uiCtx!.ui.theme.fg("mdLinkUrl", t),
+			code: (t) => uiCtx!.ui.theme.fg("mdCode", t),
+			codeBlock: (t) => uiCtx!.ui.theme.fg("mdCodeBlock", t),
+			codeBlockBorder: (t) => uiCtx!.ui.theme.fg("mdCodeBlockBorder", t),
+			quote: (t) => uiCtx!.ui.theme.fg("mdQuote", t),
+			quoteBorder: (t) => uiCtx!.ui.theme.fg("mdQuoteBorder", t),
+			hr: (t) => uiCtx!.ui.theme.fg("mdHr", t),
+			listBullet: (t) => uiCtx!.ui.theme.fg("mdListBullet", t),
+			bold: (t) => uiCtx!.ui.theme.bold(t),
+			italic: (t) => uiCtx!.ui.theme.italic(t),
+			underline: (t) => uiCtx!.ui.theme.underline(t),
+			strikethrough: (t) => uiCtx!.ui.theme.strikethrough(t),
+		};
+
+		// Status header
+		box.addChild(new Text(uiCtx.ui.theme.fg("mdLink", "[claude]") + " " + uiCtx.ui.theme.fg("muted", "responding..."), 0, 0));
 
 		// Show tool call activity
 		for (const [, tc] of toolCalls) {
 			const icon = tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "◉";
 			let line = `  ${icon} ${tc.name}`;
-			// Show file path from locations or rawInput
 			const path = tc.locations?.[0]?.path ?? extractPath(tc.rawInput);
 			if (path) line += ` ${path}`;
 			if (tc.status !== "completed" && tc.status !== "failed") line += ` [${tc.status}]`;
-			lines.push(line);
+			box.addChild(new Text(line, 0, 0));
 		}
 
 		// Show plan tasks
 		if (planTasks) {
-			lines.push("");
+			box.addChild(new Text("", 0, 0));
 			for (const t of planTasks) {
 				const icon = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○";
-				lines.push(`  ${icon} ${t.title}`);
+				box.addChild(new Text(`  ${icon} ${t.title}`, 0, 0));
 			}
 		}
 
-		// Show tail of response text
+		// Show tail of response text with markdown rendering
 		if (responseText) {
-			lines.push("");
+			box.addChild(new Text("", 0, 0));
 			const respLines = responseText.split("\n");
 			const visible = respLines.length > 15 ? respLines.slice(-15) : respLines;
-			lines.push(...visible);
+			const visibleText = visible.join("\n");
+			box.addChild(new Markdown(visibleText, 0, 0, mdTheme, {
+				color: (t) => uiCtx!.ui.theme.fg("mdLink", t),
+			}));
 		}
 
-		uiCtx.ui.setWidget(streamWidgetKey, lines);
+		uiCtx.ui.setWidget(streamWidgetKey, box);
 	}
 
 	function extractPath(rawInput: unknown): string | undefined {
