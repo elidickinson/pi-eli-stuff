@@ -145,6 +145,11 @@ export function handleMessageEnd(
 	const model = message.model || pending.model;
 	const usage = message.usage;
 
+	// Treat errors as aborts: HTTP errors (4XX/5XX), rate limits, etc.
+	// This prevents them from skewing metrics (e.g., 0 tok/s for failed requests)
+	const isError = message.errorMessage != null && message.errorMessage.trim().length > 0;
+	const stopReason = message.stopReason || (isError ? "aborted" : null);
+
 	const row: LlmCallRow = {
 		timestamp_ms: pending.startTime,
 		session_id: sessionId,
@@ -165,7 +170,7 @@ export function handleMessageEnd(
 		cost_total: usage?.cost.total ?? null,
 		context_tokens: pending.contextTokens,
 		context_window: pending.contextWindow || null,
-		stop_reason: message.stopReason || null,
+		stop_reason: stopReason,
 		error_message: message.errorMessage || null,
 	};
 

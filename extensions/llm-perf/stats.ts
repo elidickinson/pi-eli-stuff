@@ -32,7 +32,7 @@ export function computeModelStats(rows: LlmCallRow[]): ModelStats[] {
 		const [provider, ...modelParts] = key.split("/");
 		const model = modelParts.join("/");
 
-		const completed = modelRows.filter((r) => r.stop_reason !== "aborted");
+		const completed = modelRows.filter((r) => r.stop_reason !== "aborted" && r.stop_reason !== "error");
 		const aborts = modelRows.length - completed.length;
 
 		// Total input context = input_tokens + cache_read + cache_write.
@@ -76,7 +76,7 @@ export interface AggregateStats {
 }
 
 export function computeAggregateStats(rows: LlmCallRow[]): AggregateStats {
-	const completed = rows.filter((r) => r.stop_reason !== "aborted");
+	const completed = rows.filter((r) => r.stop_reason !== "aborted" && r.stop_reason !== "error");
 	const ttfts = completed.map((r) => r.ttft_ms).filter((v): v is number => v != null).sort((a, b) => a - b);
 	const tokPerSecValues = completed
 		.filter((r) => r.output_tokens != null && r.duration_ms != null && r.duration_ms > 0)
