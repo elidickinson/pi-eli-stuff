@@ -14,7 +14,8 @@ RUN apk add --no-cache \
     libstdc++ \
     ripgrep \
     git \
-    github-cli
+    github-cli \
+    go
 
 # Upgrade npm (Alpine's bundled version is too old)
 RUN rm -rf /usr/lib/node_modules/npm \
