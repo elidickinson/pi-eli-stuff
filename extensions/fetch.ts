@@ -89,6 +89,17 @@ export default function (pi: ExtensionAPI) {
 				})
 			),
 		}),
+		renderCall(args, theme) {
+			let text = theme.fg("toolTitle", theme.bold("fetch "));
+			text += theme.fg("accent", args.url);
+			const flags: string[] = [];
+			if (args.proxy) flags.push("proxy");
+			if (args.js_render) flags.push("js");
+			if (args.return_markdown === false) flags.push("html");
+			if (args.max_length != null) flags.push(`max:${args.max_length}`);
+			if (flags.length) text += theme.fg("muted", ` [${flags.join(", ")}]`);
+			return new Text(text, 0, 0);
+		},
 		async execute(id, params, signal, onUpdate, ctx) {
 			const { url, proxy, js_render, return_markdown = true, max_length = 40000 } = params;
 			const config = getConfig();
