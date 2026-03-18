@@ -495,11 +495,37 @@ export default function (pi: ExtensionAPI) {
 
 		const input = Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>;
 		const output = Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>;
-		const stream = ndJsonStream(input, output);
+		const rawStream = ndJsonStream(input, output);
+
+		// Workaround: intercept session/update notifications before the SDK's Zod
+		// validation. The SDK parses SessionUpdate with z.union() over 11 .and()
+		// intersection variants (zod.gen.js zSessionUpdate). When a tool_call_update
+		// with content:[] arrives, Zod v4 (4.x) throws "TypeError: content is not
+		// a function" instead of a ZodError while trying earlier union branches
+		// (agent_message_chunk etc.) whose zContentChunk schema expects content to
+		// be a single ContentBlock object. Because it's not a ZodError the SDK's
+		// catch chain wraps it as -32603 Internal Error and logs to stderr.
+		//
+		// Safe to remove once either:
+		//  - @agentclientprotocol/sdk switches zSessionUpdate to
+		//    z.discriminatedUnion("sessionUpdate", ...) (avoids trying wrong branches)
+		//  - The underlying Zod/SDK issue is identified and fixed
+		// Reproduced on Zod 4.3.6, @agentclientprotocol/sdk 0.16.1.
+		const filter = new TransformStream({
+			transform(msg: any, controller) {
+				if ("method" in msg && msg.method === "session/update" && !("id" in msg) && msg.params) {
+					try { handleSessionUpdate(msg.params); } catch { /* non-fatal */ }
+					return;
+				}
+				controller.enqueue(msg);
+			},
+		});
+		rawStream.readable.pipeTo(filter.writable).catch(() => {});
+		const stream = { readable: filter.readable, writable: rawStream.writable };
 
 		connection = new ClientSideConnection(
 			() => ({
-				sessionUpdate: async (params) => handleSessionUpdate(params),
+				sessionUpdate: async () => {}, // handled by stream filter above
 				requestPermission: async (params) => handleRequestPermission(params),
 				readTextFile: async (params) => handleReadTextFile(params),
 				writeTextFile: async (params) => handleWriteTextFile(params),
