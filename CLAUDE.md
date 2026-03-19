@@ -21,11 +21,12 @@ pi-my-stuff/
 ├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claude-acpx, fetch, statusnote, llm-perf, slash-clear, failover)
 ├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
-├── pi-my-browser/   # Browser automation extension
-├── claude-agent-sdk-pi/ # Claude Agent SDK provider (routes LLM calls through Claude Code)
-├── pi-subagents/    # Subagent orchestration library
-├── pi-plan/         # Planning agent
+├── pi-benchmark/    # Benchmark capture and replay
 ├── docs/            # Additional documentation
+├── pi-my-browser/   # Browser automation extension (separate repo)
+├── claude-agent-sdk-pi/ # Claude Agent SDK provider (separate repo)
+├── pi-subagents/    # Subagent orchestration library (separate repo)
+├── pi-plan/         # Planning agent (separate repo)
 └── vendor/          # vendored pi resources (pi-mono, pi-skills, gondolin)
 ```
 
@@ -154,6 +155,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "MyTool",
+    label: "My Tool",
     description: "Does something cool",
     parameters: Type.Object({ /* schema */ }),
     async execute(id, params, signal, onUpdate, ctx) {
@@ -162,6 +164,10 @@ export default function (pi: ExtensionAPI) {
   });
 }
 ```
+
+### Type-checking
+
+Extensions are loaded dynamically at runtime — there's no compile step. Run `npx tsc --noEmit` from the project root to catch API mismatches against the vendor pi types. pi-benchmark and pi-subagents have their own tsconfigs.
 
 ### Adding a skill
 

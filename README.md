@@ -69,6 +69,16 @@ cd sandbox && ./build.sh
 | `slash-clear.ts` | `/clear` command (alias for `/new`) |
 | `failover.ts` | Auto-rotate API keys on rate limit (config: `~/.pi/agent/failover.json`) |
 
+## Benchmark
+
+`pi-benchmark/` — Capture conversation state + repo state for replaying with different models/providers/settings.
+
+```bash
+/benchmark-capture "tricky auth bug"   # Capture current state
+/benchmark-list                        # List captures
+./pi-benchmark/benchmark-replay.sh benchmarks/tricky-auth-bug --model sonnet
+```
+
 ## Skills
 
 | Skill | Description |
