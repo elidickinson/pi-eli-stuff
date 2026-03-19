@@ -11,11 +11,11 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, copyFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 
-// Benchmarks live next to the extensions/ dir
+// Benchmarks live next to the src/ dir
 const BENCHMARKS_DIR = resolve(dirname(new URL(import.meta.url).pathname), "../benchmarks");
 
 interface CaptureJson {
@@ -46,7 +46,6 @@ function gitRef(cwd: string): string {
 
 function gitDiff(cwd: string): string {
 	try {
-		// Staged + unstaged changes
 		return execFileSync("git", ["diff", "HEAD"], { cwd, encoding: "utf8" }).trim();
 	} catch {
 		return "";
@@ -96,7 +95,6 @@ export default function (pi: ExtensionAPI) {
 
 			const cwd = ctx.cwd;
 			const entries = ctx.sessionManager.getEntries();
-			const buildCtx = ctx.sessionManager.buildSessionContext();
 
 			// prompt.md — last user message
 			const prompt = lastUserMessage(entries);
@@ -112,8 +110,8 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			// capture.json — metadata
-			const model = buildCtx.model
-				? `${buildCtx.model.provider}/${buildCtx.model.modelId}`
+			const model = ctx.model
+				? `${ctx.model.provider}/${ctx.model.id}`
 				: undefined;
 
 			const meta: CaptureJson = {
@@ -122,7 +120,7 @@ export default function (pi: ExtensionAPI) {
 				git_ref: gitRef(cwd),
 				cwd,
 				model,
-				thinking_level: buildCtx.thinkingLevel,
+				thinking_level: pi.getThinkingLevel(),
 				message_count: entries.length,
 			};
 			writeFileSync(join(captureDir, "capture.json"), JSON.stringify(meta, null, 2) + "\n");

@@ -1,0 +1,19 @@
+{
+	"name": "@esd/pi-benchmark",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Benchmark capture and replay for pi extensions",
+	"main": "./src/index.ts",
+	"scripts": {
+		"check": "tsc --noEmit"
+	},
+	"peerDependencies": {
+		"@mariozechner/pi-coding-agent": ">=0.57.0",
+		"@mariozechner/pi-tui": ">=0.57.0"
+	},
+	"devDependencies": {
+		"@mariozechner/pi-coding-agent": "file:../vendor/pi-mono/packages/coding-agent",
+		"@mariozechner/pi-tui": "file:../vendor/pi-mono/packages/tui",
+		"typescript": "^5.9.3"
+	}
+}

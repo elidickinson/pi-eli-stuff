@@ -16,6 +16,6 @@
 			"@sinclair/typebox": ["./vendor/pi-mono/node_modules/@sinclair/typebox/build/esm/index.d.mts"]
 		}
 	},
-	"include": ["extensions/**/*.ts", "pi-benchmark/extensions/**/*.ts"],
+	"include": ["extensions/**/*.ts"],
 	"exclude": ["node_modules", "vendor"]
 }
