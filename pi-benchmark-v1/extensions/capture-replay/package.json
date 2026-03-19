@@ -1,0 +1,7 @@
+{
+  "name": "pi-capture-replay",
+  "version": "1.0.0",
+  "description": "Capture and replay Pi conversations for model testing",
+  "type": "module",
+  "main": "index.ts"
+}
