@@ -34,39 +34,31 @@ Runs parallel web research via multiple agents and synthesizes findings into a c
    - Any constraints or scope from the user
    - Local context bullets (if any)
 
-4. **Pick a short TOPIC slug** from the question (e.g., "sqlite-wal", "react-server-components"). Used in file names below.
+4. **Pick a short topic slug** from the question (e.g., `sqlite-wal`, `react-server-components`).
 
-5. **Determine OUTPUT_DIR.** Use current working directory for agent outputs:
+5. **Create the research directory** at `research/<topic>/` (relative to cwd). All agent output and the final report go here.
    ```bash
-   OUTPUT_DIR=$(pwd)
-   # Will be something like /workspace or /Users/esd/projects/...
+   mkdir -p research/<topic>
    ```
-   Write all research files to `$OUTPUT_DIR/research-TOPIC-*.md`
 
 ---
 
 ## Phase 1: Parallel Research
 
-**Spawn all subagents at once without waiting for any to complete so they work in parallel. You should wait for them all to complete to assemble your results. **
+**Spawn all subagents in a single tool response so they run in parallel.** Use `run_in_background: true` on every agent. Background agents notify you on completion automatically — do not poll or check on them. Wait for all notifications before proceeding to Phase 2.
 
+Every agent prompt must include the **absolute path** to `research/<topic>/` so it knows where to write. Resolve it once in Phase 0 and embed it in each prompt.
 
-Replace `TOPIC`, `RESEARCH_PROMPT`, and `$OUTPUT_DIR` with the values from Phase 0 before executing.
+### Research prompt template
 
-### Subagent 1: Claude Web (always)
-
-Create a background subagent using the Agent tool that is instructed to ask claude to do research.
-
-**Session:** `research-TOPIC-claude` (auto-created by the tool)
-
-Here's an example of what you should ask the subagent to do:
+All agents get a prompt structured like this (substitute the correct output filename per agent):
 
 ```
-ClaudeAcp({
-  prompt: "RESEARCH_PROMPT
+<RESEARCH_PROMPT>
 
-Research this topic thoroughly using web search. Write your findings to $OUTPUT_DIR/research-TOPIC-claude-web.md using this format:
+Research this topic thoroughly using web search. Write your findings to <absolute path>/research/<topic>/<agent>.md using this format:
 
-# Research: TOPIC
+# Research: <topic>
 
 ## <Subtopic>
 - Finding with detail [source](url)
@@ -80,60 +72,61 @@ Research this topic thoroughly using web search. Write your findings to $OUTPUT_
 
 CRITICAL RULE: You are a research GATHERING agent, NOT an analyst. Do NOT synthesize, analyze, or draw conclusions. Report what you find with sources. Flag conflicts. That's it.
 
-The synthesis happens in Phase 2 by the orchestrator who has access to all agent outputs.",
-  session_name: "research-TOPIC-claude",
-  permissions: "approve-all",
-  timeout: 300
+The synthesis happens in Phase 2 by the orchestrator who has access to all agent outputs.
+```
+
+### Subagent 1: Claude Web (always)
+
+Uses `ask-claude` subagent type to run research via Claude Code (which has its own web search).
+
+```
+Agent({
+  subagent_type: "ask-claude",
+  prompt: "<research prompt — output file: claude-web.md>",
+  description: "Research <topic> via Claude",
+  run_in_background: true
 })
 ```
 
 ### Subagent 2: Pi Web (always)
 
-Create a background subagent with your Agent tool that uses a prompt like:
+Uses `general-purpose` subagent type — inherits pi's tools including web search.
+
 ```
-RESEARCH_PROMPT
-
-Research this topic thoroughly using web search. Write your findings to $OUTPUT_DIR/research-TOPIC-pi-web.md using this format:
-
-# Research: TOPIC
-
-## <Subtopic>
-- Finding with detail [source](url)
-- UNCERTAIN: Conflicting claim [source](url) vs [other](url)
-
-## <Another Subtopic>
-- ...
-
-## Sources
-- [Title](url) - what was found here
-
-CRITICAL RULE: Do NOT synthesize or analyze. Just report findings with sources.
+Agent({
+  subagent_type: "general-purpose",
+  prompt: "<research prompt — output file: pi-web.md>",
+  description: "Research <topic> via Pi",
+  run_in_background: true
+})
 ```
 
-### Subagent 3: Pi Browser (conditional)
+### Subagent 3: Pi Fetch/Browser (conditional)
 
-**Only spawn if** the task involves sites that block automated search agents or require on-site interaction. Examples: TripAdvisor, restaurant reservations, booking sites, directory sites, forums with custom search, price comparison requiring navigation.
+**Only spawn if** specific known URLs need to be read directly (search alone won't surface the content).
 
-Create a background subagent with a prompt like:
+Prefer `fetch` for retrieving page content — it's a fast one-shot HTML grab with stealth options. Only use `br` for sites that require interaction (clicking, filling forms, pagination, navigating SPAs).
+
 ```
-RESEARCH_PROMPT
+Agent({
+  subagent_type: "general-purpose",
+  prompt: "<research prompt — output file: pi-fetch.md>
 
-Use the `br` CLI to navigate specific relevant sites and extract information. Write findings to $OUTPUT_DIR/research-TOPIC-pi-browser.md using the same format as above.
-
-br usage: `br goto <url>`, `br extract-content`, `br view-tree`, `br click <id>`, `br fill-search <query>`. The daemon auto-starts. Chain commands with &&.
-
-CRITICAL RULE: Do NOT synthesize or analyze. Just report findings with sources.
+For specific pages, use the `fetch` tool to retrieve content directly.
+Only fall back to the `br` CLI if a page requires interaction (clicking, form input, pagination).
+br usage: `br goto <url>`, `br extract-content`, `br view-tree`, `br click <id>`, `br fill-search <query>`. The daemon auto-starts. Chain commands with &&.",
+  description: "Fetch pages for <topic>",
+  run_in_background: true
+})
 ```
+
+### All agents must be spawned in the same tool response.
+
+This ensures they run concurrently. Do NOT spawn one, wait, then spawn the next.
 
 **As each agent completes**, output a one-line progress update:
 ```
 [agent-type] complete: found X findings covering Y subtopics
-```
-
-Example:
-```
-Claude web complete: found 15 findings covering GitHub extensions, MCP servers, and CLI tools
-Pi web complete: found 12 findings covering npm packages and documentation
 ```
 
 ---
@@ -142,7 +135,7 @@ Pi web complete: found 12 findings covering npm packages and documentation
 
 After all agents complete:
 
-1. **Read all** `$OUTPUT_DIR/research-TOPIC-*.md` files.
+1. **Read all `.md` files** in `research/<topic>/` (excluding `report.md`).
 
    **If a file is missing:** Note in the report that the agent failed to produce output, and exclude it from confidence assessments. Continue with other agents' data.
 
@@ -153,7 +146,7 @@ After all agents complete:
    - Keep it concise — bullets over paragraphs
    - Note gaps: important aspects with no good sources
 
-3. **Write full report** to `$OUTPUT_DIR/research-TOPIC-report.md` with:
+3. **Write full report** to `research/<topic>/<topic>-report.md` with:
    - All findings organized thematically
    - Source list with annotations
    - Contradictions section (if any)
@@ -162,21 +155,11 @@ After all agents complete:
 
 ---
 
-## Optional Cleanup
-
-After research is complete and you no longer need session history:
-```bash
-acpx claude sessions delete research-TOPIC-claude
-```
-Sessions persist indefinitely otherwise, which is useful for follow-up queries like "tell me more about X that you found."
-
----
-
 ## Environment Considerations
 
 ### Sandbox/VM Environments (Gondolin, containers, etc.)
 
-- **Use `$OUTPUT_DIR`** (resolved in Phase 0 from `$(pwd)`) for all file paths
+- Resolve `research/<topic>/` to an absolute path before embedding in agent prompts
 - **Avoid `/tmp` or other host-relative paths** that may not be accessible
 - **Test file write/read permissions** before spawning agents
 - Agent output must be readable from the orchestrator's context
@@ -184,7 +167,6 @@ Sessions persist indefinitely otherwise, which is useful for follow-up queries l
 ### File Access Checklist
 
 If running in a sandboxed environment:
-- [ ] Are output paths relative to working directory?
 - [ ] Can orchestrator read files written by agents?
 - [ ] Is the output directory writable?
 - [ ] Do agents have `web_search` tool access?
