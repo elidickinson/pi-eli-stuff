@@ -11,9 +11,8 @@
  * Debug: LLM_PERF_DEBUG=1 enables verbose logging to stderr.
  */
 
-import type { ExtensionAPI, MessageUpdateEvent } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { Text } from "@mariozechner/pi-tui";
 import { randomUUID } from "node:crypto";
 import { handleTurnStart, handleMessageStart, handleMessageUpdate, handleMessageEnd, type PendingCall } from "./state-machine.js";
 import { getDbPath, openDb, insertCall, queryCalls, purgeBefore, getDistinctModels } from "./db.js";
@@ -83,7 +82,7 @@ function parseArgs(raw: string): ParsedArgs {
 
 // ── Extension ──
 
-const MSG_TYPE = "llm-perf-report";
+const WIDGET_KEY = "llm-perf-report";
 
 export default function (pi: ExtensionAPI) {
 	const sessionId = randomUUID();
@@ -122,6 +121,11 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Event handlers ──
 
+	pi.on("input", (_event, ctx) => {
+		ctx.ui.setWidget(WIDGET_KEY, undefined);
+		return { action: "continue" as const };
+	});
+
 	pi.on("turn_start", (event, ctx) => {
 		if (!currentModelFilter) currentModelFilter = ctx.model?.id;
 		const usage = ctx.getContextUsage();
@@ -149,7 +153,7 @@ export default function (pi: ExtensionAPI) {
 		if (d) updateStatusBar(d, ctx, Date.now());
 	});
 
-	pi.on("message_update", (event: MessageUpdateEvent) => {
+	pi.on("message_update", (event) => {
 		const evtType = event.assistantMessageEvent.type;
 		pending = handleMessageUpdate(pending, evtType, Date.now());
 	});
@@ -176,13 +180,6 @@ export default function (pi: ExtensionAPI) {
 				updateStatusBar(d, ctx, now);
 			}
 		}
-	});
-
-	// ── Message renderer ──
-
-	pi.registerMessageRenderer(MSG_TYPE, (message, _options, theme) => {
-		const content = typeof message.content === "string" ? message.content : message.content[0]?.text || "";
-		return new Text(content, 0, 0);
 	});
 
 	// ── Command ──
@@ -235,10 +232,7 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			const report = formatReportHorizontal(ranges, ctx.ui.theme);
-			pi.sendMessage(
-				{ customType: MSG_TYPE, content: report, display: true, details: {} },
-				{ triggerTurn: false },
-			);
+			ctx.ui.setWidget(WIDGET_KEY, report.split("\n"));
 		},
 	});
 }
