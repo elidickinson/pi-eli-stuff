@@ -324,7 +324,7 @@ async execute(_id, params, signal, _onUpdate, ctx) {
 | `ctx.ui.select(title, items)` | Blocking selection dialog. |
 | `ctx.ui.input(title, placeholder?)` | Blocking text input. |
 | `ctx.ui.setStatus(key, text)` | Footer status line. Pass `undefined` to clear. |
-| `ctx.ui.setWidget(key, lines)` | Widget above/below editor. |
+| `ctx.ui.setWidget(key, content)` | Widget above/below editor. `content` is `string[]` or `(tui, theme) => Component`. |
 
 To put information into the conversation context (visible to the LLM in future turns), use `pi.sendMessage()` with `{ triggerTurn: false }`. See the [official docs](../vendor/pi-mono/packages/coding-agent/docs/extensions.md) for full UI reference.
 
@@ -349,4 +349,10 @@ const truncation = truncateHead(output, {
 
 **`renderResult` padding.** Always use `new Text(text, 0, 0)` -- the wrapping Box handles padding. Non-zero padding doubles it.
 
-**Available imports:** `@mariozechner/pi-coding-agent` (types, tool factories, truncation utils), `@sinclair/typebox` (parameter schemas), `@mariozechner/pi-ai` (`StringEnum`), `@mariozechner/pi-tui` (`Text`, `Component`). Node built-ins and npm deps also work.
+**`setWidget` accepts `string[]` or a factory function, not components.** `ctx.ui.setWidget(key, box)` where `box` is a `Box` or `Text` will silently fail — the runtime tries to call it as a function. Use a factory: `ctx.ui.setWidget(key, () => box)`. For simple text, use a string array: `ctx.ui.setWidget(key, ["line 1", "line 2"])`.
+
+**`setWidget` has a 10-line limit.** Content beyond 10 lines is truncated with "... (widget truncated)".
+
+**Type-check extensions with `npx tsc --noEmit`.** The project `tsconfig.json` maps `@mariozechner/*` and `@sinclair/typebox` to vendor types. Run this to catch API mismatches — pi loads extensions dynamically at runtime with no compile step, so type errors are otherwise silent.
+
+**Available imports:** `@mariozechner/pi-coding-agent` (types, tool factories, truncation utils), `@sinclair/typebox` (parameter schemas), `@mariozechner/pi-ai` (`StringEnum`), `@mariozechner/pi-tui` (`Text`, `Box`, `Markdown`, `Component`). Node built-ins and npm deps also work.

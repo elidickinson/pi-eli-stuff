@@ -188,7 +188,7 @@ export default function (pi: ExtensionAPI) {
 			}));
 		}
 
-		uiCtx.ui.setWidget(streamWidgetKey, box);
+		uiCtx.ui.setWidget(streamWidgetKey, () => box);
 	}
 
 	function extractPath(rawInput: unknown): string | undefined {
@@ -514,7 +514,7 @@ export default function (pi: ExtensionAPI) {
 		const filter = new TransformStream({
 			transform(msg: any, controller) {
 				if ("method" in msg && msg.method === "session/update" && !("id" in msg) && msg.params) {
-					try { handleSessionUpdate(msg.params); } catch { /* non-fatal */ }
+					try { handleSessionUpdate(msg.params); } catch (e) { console.error("[claude-acp] session/update handler error:", e); }
 					return;
 				}
 				controller.enqueue(msg);
