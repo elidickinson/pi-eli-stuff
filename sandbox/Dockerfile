@@ -15,7 +15,9 @@ RUN apk add --no-cache \
     ripgrep \
     git \
     github-cli \
-    go
+    go \
+    jq \
+    file
 
 # Upgrade npm (Alpine's bundled version is too old)
 RUN rm -rf /usr/lib/node_modules/npm \
@@ -26,7 +28,9 @@ RUN rm -rf /usr/lib/node_modules/npm \
 # Git config
 RUN printf '[safe]\n\tdirectory = *\n' > /etc/gitconfig \
     && printf '.venv-sandbox/\n' > /etc/gitignore_global \
-    && git config --file /etc/gitconfig core.excludesFile /etc/gitignore_global
+    && git config --file /etc/gitconfig core.excludesFile /etc/gitignore_global \
+    && git config --file /etc/gitconfig user.name "Eli Dickinson" \
+    && git config --file /etc/gitconfig user.email "eli@elidickinson.com"
 
 # curl-impersonate
 RUN curl -fsSL https://github.com/lexiforest/curl-impersonate/releases/download/v1.5.1/curl-impersonate-v1.5.1.aarch64-linux-musl.tar.gz \
@@ -40,9 +44,6 @@ RUN npm install -g https://github.com/elidickinson/browser-cli/archive/refs/head
 
 # acpx
 RUN npm install -g acpx@latest
-
-# TODO: integrate with install at top
-RUN apk add --no-cache file
 
 # Guest tools from sandbox/guest-tools/
 COPY guest-tools/ /usr/local/lib/guest-tools/

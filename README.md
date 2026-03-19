@@ -62,7 +62,7 @@ cd sandbox && ./build.sh
 | `ask-pi.ts` | Run pi as read-only subprocess |
 | `ask-claude.ts` | *(deprecated, use claude-acp)* Run Claude Code as subprocess |
 | `claude-acp.ts` | Claude Code via ACP with persistent sessions |
-| `claudemode.ts` | Toggle mode: forward pi messages to Claude Code via ACP |
+| `claude-acpx.ts` | *(deprecated)* One-shot Claude Code tool via acpx CLI |
 | `fetch.ts` | Fetch URLs as markdown, with optional proxy and JS rendering |
 | `llm-perf/` | Passive LLM metrics tracking (TTFT, latency, throughput, cost) |
 | `statusnote.ts` | `/status` command — persistent footer note |
@@ -74,7 +74,6 @@ cd sandbox && ./build.sh
 | Skill | Description |
 |-------|-------------|
 | `multi-review` | Parallel code review using Claude, DeepSeek, and Kimi |
-| `acpx-claude` | Delegate to Claude via acpx (full tool access) |
 | `br` | Browser automation CLI for web scraping and navigation |
 | `deep-research` | Parallel web agent research using multiple search queries |
 
@@ -88,4 +87,4 @@ Add to `~/.config/pi/pi.json`:
 }
 ```
 
-Then invoke with `/skill:<name>` (e.g., `/skill:br`, `/skill:acpx-claude`).
+Then invoke with `/skill:<name>` (e.g., `/skill:br`, `/skill:deep-research`).
