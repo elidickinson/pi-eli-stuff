@@ -13,6 +13,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
+import { Container, Text } from "@mariozechner/pi-tui";
 import { randomUUID } from "node:crypto";
 import { handleTurnStart, handleMessageStart, handleMessageUpdate, handleMessageEnd, type PendingCall } from "./state-machine.js";
 import { getDbPath, openDb, insertCall, queryCalls, purgeBefore, getDistinctModels } from "./db.js";
@@ -232,7 +233,13 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			const report = formatReportHorizontal(ranges, ctx.ui.theme);
-			ctx.ui.setWidget(WIDGET_KEY, report.split("\n"));
+			ctx.ui.setWidget(WIDGET_KEY, () => {
+				const container = new Container();
+				for (const line of report.split("\n")) {
+					container.addChild(new Text(line, 0, 0));
+				}
+				return container;
+			});
 		},
 	});
 }
