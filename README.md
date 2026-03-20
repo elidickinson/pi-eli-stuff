@@ -63,6 +63,7 @@ cd sandbox && ./build.sh
 | `ask-claude.ts` | *(deprecated, use claude-acp)* Run Claude Code as subprocess |
 | `claude-acp.ts` | Claude Code via ACP with persistent sessions |
 | `claude-acpx.ts` | *(deprecated)* One-shot Claude Code tool via acpx CLI |
+| `kagi-search/` | Kagi web search and URL summarization (token: env, config, or interactive prompt) |
 | `fetch.ts` | Fetch URLs as markdown, with optional proxy and JS rendering |
 | `llm-perf/` | Passive LLM metrics tracking (TTFT, latency, throughput, cost) |
 | `statusnote.ts` | `/status` command — persistent footer note |

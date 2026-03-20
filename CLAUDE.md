@@ -18,7 +18,7 @@ Example: `ExtensionContext` has `ctx.model` (a property), NOT `ctx.getModel()` (
 
 ```
 pi-my-stuff/
-├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claude-acpx, fetch, statusnote, llm-perf, slash-clear, failover)
+├── extensions/      # pi extensions (grep, find, ask-pi, ask-claude, claude-acp, claude-acpx, fetch, statusnote, llm-perf, slash-clear, failover, kagi-search)
 ├── skills/          # pi skills (multi-review, br, deep-research)
 ├── sandbox/         # Gondolin VM sandbox integration
 ├── pi-benchmark/    # Benchmark capture and replay
@@ -76,6 +76,14 @@ Interactive Claude Code mode via ACP. Forwards all user messages to Claude Code 
 
 ### claude-acpx
 One-shot Claude Code tool via `acpx` CLI. Sends a prompt and returns the result. Supports named sessions for multi-turn conversations.
+
+### kagi-search
+Search and summarize via Kagi API. Token resolved from `KAGI_SESSION_TOKEN` env var, `~/.pi/agent/kagi-search.json`, or interactive prompt on first use.
+
+```typescript
+kagi_search({ query: "rust async runtime", limit: 5 })
+kagi_summarize({ input: "https://example.com", type: "takeaway" })
+```
 
 ### fetch
 Fetch web pages and download files. Supports proxy auth via `~/.pi/agent/fetch.json`.
