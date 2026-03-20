@@ -55,6 +55,18 @@ async function getToken(ctx: ExtensionContext): Promise<string> {
 }
 
 export default function kagiSearchExtension(pi: ExtensionAPI) {
+	const MIN_INTERVAL = 1000;
+	let lastCallTime = 0;
+
+	async function throttle() {
+		const now = Date.now();
+		const elapsed = now - lastCallTime;
+		if (elapsed < MIN_INTERVAL) {
+			await new Promise((resolve) => setTimeout(resolve, MIN_INTERVAL - elapsed));
+		}
+		lastCallTime = Date.now();
+	}
+
 	pi.registerTool({
 		name: "kagi_search",
 		label: "Kagi Search",
@@ -113,6 +125,7 @@ export default function kagiSearchExtension(pi: ExtensionAPI) {
 		},
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			await throttle();
 			const token = await getToken(ctx);
 			const result = await search(params.query, token, params.limit);
 
@@ -193,6 +206,7 @@ export default function kagiSearchExtension(pi: ExtensionAPI) {
 		},
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			await throttle();
 			const token = await getToken(ctx);
 
 			const isUrl =
