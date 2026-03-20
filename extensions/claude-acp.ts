@@ -161,6 +161,8 @@ export default function (pi: ExtensionAPI) {
 		// Response text first (the part the user actually wants to read)
 		if (responseText) {
 			box.addChild(new Text(uiCtx.ui.theme.fg("mdLink", "[claude]"), 0, 0));
+			// Preserve paragraph breaks: split on double-newline boundaries so
+			// the Markdown parser sees proper paragraph separators.
 			const respLines = responseText.split("\n");
 			const visible = respLines.length > 20 ? respLines.slice(-20) : respLines;
 			box.addChild(new Markdown(visible.join("\n"), 0, 0, mdTheme, {
