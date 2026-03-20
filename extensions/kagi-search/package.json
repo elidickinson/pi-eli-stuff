@@ -1,0 +1,12 @@
+{
+  "name": "pi-kagi-search",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "kagi-ken": "github:czottmann/kagi-ken#1.3.0"
+  }
+}
