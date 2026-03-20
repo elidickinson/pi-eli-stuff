@@ -7,6 +7,6 @@
     "extensions": ["./index.ts"]
   },
   "dependencies": {
-    "kagi-ken": "github:czottmann/kagi-ken#1.3.0"
+    "kagi-ken": "github:elidickinson/kagi-ken"
   }
 }
