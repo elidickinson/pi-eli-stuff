@@ -36,7 +36,13 @@ Runs parallel web research via multiple agents and synthesizes findings into a c
 
 4. **Pick a short topic slug** from the question (e.g., `sqlite-wal`, `react-server-components`).
 
-5. **Create the research directory** at `research/<topic>/` (relative to cwd). All agent output and the final report go here.
+5. **Break the question into research angles.** Identify 2-4 distinct angles that together cover the question. Each angle should produce different search queries naturally. Give each a short slug.
+
+   Examples:
+   - "Best database for time-series data" → `technical-specs`, `benchmarks-comparisons`, `production-experience`
+   - "How does QUIC work?" → `protocol-design`, `implementation-status`, `performance-vs-tcp`
+
+6. **Create the research directory** at `research/<topic>/` (relative to cwd). All agent output and the final report go here.
    ```bash
    mkdir -p research/<topic>
    ```
@@ -75,9 +81,9 @@ CRITICAL RULE: You are a research GATHERING agent, NOT an analyst. Do NOT synthe
 The synthesis happens in Phase 2 by the orchestrator who has access to all agent outputs.
 ```
 
-### Subagent 1: Claude Web (always)
+### Claude Web (always, 1 agent)
 
-Uses `ask-claude` subagent type to run research via Claude Code (which has its own web search).
+Gets the full unscoped research prompt — different model/toolset provides natural diversity without needing angle scoping.
 
 ```
 Agent({
@@ -88,34 +94,33 @@ Agent({
 })
 ```
 
-### Subagent 2: Pi Web (always)
+### Pi Web (always, 1 agent per angle)
 
-Uses `general-purpose` subagent type — inherits pi's tools including web search.
+Spawn one `general-purpose` agent per research angle from Phase 0. Prepend the angle focus to the research prompt so each agent searches differently.
 
 ```
 Agent({
   subagent_type: "general-purpose",
-  prompt: "<research prompt — output file: pi-web.md>",
-  description: "Research <topic> via Pi",
+  prompt: "Focus your research on: <angle description>\n\n<research prompt — output file: <angle-slug>.md>",
+  description: "<angle-slug>",
   run_in_background: true
 })
 ```
 
-### Subagent 3: Pi Fetch/Browser (conditional)
+### Pi Browser (conditional)
 
-**Only spawn if** specific known URLs need to be read directly (search alone won't surface the content).
+**Only spawn if** the topic involves sites that require a real browser to navigate — SPAs, interactive search, pagination, form input. Examples: TripAdvisor, booking sites, directory sites with custom search.
 
-Prefer `fetch` for retrieving page content — it's a fast one-shot HTML grab with stealth options. Only use `br` for sites that require interaction (clicking, filling forms, pagination, navigating SPAs).
+Do NOT spawn for sites that serve static HTML — the other agents can use `fetch` for that.
 
 ```
 Agent({
   subagent_type: "general-purpose",
-  prompt: "<research prompt — output file: pi-fetch.md>
+  prompt: "<research prompt — output file: browser.md>
 
-For specific pages, use the `fetch` tool to retrieve content directly.
-Only fall back to the `br` CLI if a page requires interaction (clicking, form input, pagination).
+Use the `br` CLI to navigate the target sites and extract information.
 br usage: `br goto <url>`, `br extract-content`, `br view-tree`, `br click <id>`, `br fill-search <query>`. The daemon auto-starts. Chain commands with &&.",
-  description: "Fetch pages for <topic>",
+  description: "Browse sites for <topic>",
   run_in_background: true
 })
 ```
