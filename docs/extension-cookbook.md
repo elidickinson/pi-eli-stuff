@@ -100,7 +100,9 @@ Basics here; for the full rendering API (details metadata, keybindings, streamin
 
 ### renderCall
 
-Shows tool invocation before/during execution. From [`extensions/ask-pi.ts`](../extensions/ask-pi.ts):
+Shows tool invocation before/during execution. **Always show the key parameters** so the user can see what the tool was called with at a glance — query strings, file paths, URLs, model names, etc. Without this, tool calls are opaque boxes.
+
+From [`extensions/ask-pi.ts`](../extensions/ask-pi.ts):
 
 ```typescript
 import { Text } from "@mariozechner/pi-tui";
