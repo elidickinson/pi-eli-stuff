@@ -134,11 +134,8 @@ export default function (pi: ExtensionAPI) {
 		uiCtx.ui.setStatus("claude-acp", status);
 	}
 
-	function updateStreamWidget() {
-		if (!uiCtx) return;
-		const box = new Box(0, 0);
-
-		const mdTheme: MarkdownTheme = {
+	function buildMdTheme(): MarkdownTheme {
+		return {
 			heading: (t) => uiCtx!.ui.theme.bold(uiCtx!.ui.theme.fg("mdHeading", t)),
 			link: (t) => uiCtx!.ui.theme.fg("mdLink", t),
 			linkUrl: (t) => uiCtx!.ui.theme.fg("mdLinkUrl", t),
@@ -154,18 +151,23 @@ export default function (pi: ExtensionAPI) {
 			underline: (t) => uiCtx!.ui.theme.underline(t),
 			strikethrough: (t) => uiCtx!.ui.theme.strikethrough(t),
 		};
+	}
 
-		// Status header
-		box.addChild(new Text(uiCtx.ui.theme.fg("mdLink", "[claude]") + " " + uiCtx.ui.theme.fg("muted", "responding..."), 0, 0));
+	function updateStreamWidget() {
+		if (!uiCtx) return;
+		const box = new Box(0, 0);
+		const mdTheme = buildMdTheme();
 
-		// Show tool call activity
-		for (const [, tc] of toolCalls) {
-			const icon = tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "◉";
-			let line = `  ${icon} ${tc.name}`;
-			const path = tc.locations?.[0]?.path ?? extractPath(tc.rawInput);
-			if (path) line += ` ${path}`;
-			if (tc.status !== "completed" && tc.status !== "failed") line += ` [${tc.status}]`;
-			box.addChild(new Text(line, 0, 0));
+		// Response text first (the part the user actually wants to read)
+		if (responseText) {
+			box.addChild(new Text(uiCtx.ui.theme.fg("mdLink", "[claude]"), 0, 0));
+			const respLines = responseText.split("\n");
+			const visible = respLines.length > 20 ? respLines.slice(-20) : respLines;
+			box.addChild(new Markdown(visible.join("\n"), 0, 0, mdTheme, {
+				color: (t) => uiCtx!.ui.theme.fg("mdLink", t),
+			}));
+		} else {
+			box.addChild(new Text(uiCtx.ui.theme.fg("mdLink", "[claude]") + " " + uiCtx.ui.theme.fg("muted", "responding..."), 0, 0));
 		}
 
 		// Show plan tasks
@@ -177,15 +179,34 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Show tail of response text with markdown rendering
-		if (responseText) {
-			box.addChild(new Text("", 0, 0));
-			const respLines = responseText.split("\n");
-			const visible = respLines.length > 15 ? respLines.slice(-15) : respLines;
-			const visibleText = visible.join("\n");
-			box.addChild(new Markdown(visibleText, 0, 0, mdTheme, {
-				color: (t) => uiCtx!.ui.theme.fg("mdLink", t),
-			}));
+		// Tool calls: show in-progress + last 3 completed, collapse the rest
+		const active: [string, ToolCallState][] = [];
+		const completed: [string, ToolCallState][] = [];
+		for (const entry of toolCalls) {
+			if (entry[1].status === "completed" || entry[1].status === "failed") {
+				completed.push(entry);
+			} else {
+				active.push(entry);
+			}
+		}
+		const MAX_COMPLETED = 3;
+		const hiddenCount = Math.max(0, completed.length - MAX_COMPLETED);
+		const visibleCompleted = hiddenCount > 0 ? completed.slice(-MAX_COMPLETED) : completed;
+		const visibleTools = [...visibleCompleted, ...active];
+
+		if (visibleTools.length > 0 || hiddenCount > 0) {
+			box.addChild(new Text(uiCtx.ui.theme.fg("dim", "─".repeat(20)), 0, 0));
+			if (hiddenCount > 0) {
+				box.addChild(new Text(uiCtx.ui.theme.fg("dim", `  … ${hiddenCount} earlier tool call${hiddenCount > 1 ? "s" : ""}`), 0, 0));
+			}
+			for (const [, tc] of visibleTools) {
+				const icon = tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "◉";
+				let line = `  ${icon} ${tc.name}`;
+				const path = tc.locations?.[0]?.path ?? extractPath(tc.rawInput);
+				if (path) line += ` ${path}`;
+				if (tc.status !== "completed" && tc.status !== "failed") line += ` [${tc.status}]`;
+				box.addChild(new Text(line, 0, 0));
+			}
 		}
 
 		uiCtx.ui.setWidget(streamWidgetKey, () => box);
